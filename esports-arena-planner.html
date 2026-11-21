@@ -1,0 +1,1594 @@
+<title>Esports Arena Planner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: broadcast-console shell. Top control strip, rig palette left, 3D viewport centre, inspector right, cue + camera bus along the bottom. Single dark look by choice (it's a show console). */
+:root{
+  --bg:#0b0f15; --panel:#121822; --panel2:#18202c; --line:#263142; --fg:#e2e8f1; --muted:#8693a7;
+  --accent:#f5a524; --accent-ink:#1a1204; --tally:#ff3b3b; --ok:#38d39f; --sel:#4cc3ff;
+  --f-display:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+  --f-body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:13px;overflow:hidden}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+button:hover{border-color:#3a4a62;background:#1e2836}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--sel);outline-offset:1px}
+button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.danger{border-color:#5a2a2a;color:#ff9b9b}
+input[type=text],input[type=number],select{background:#0e141d;border:1px solid var(--line);border-radius:5px;padding:5px 7px;min-width:0}
+input[type=range]{accent-color:var(--accent);width:100%;min-width:0}
+input[type=color]{width:38px;height:26px;border:1px solid var(--line);border-radius:5px;background:#0e141d;padding:1px}
+input[type=checkbox]{accent-color:var(--accent)}
+#app{height:100%;display:grid;grid-template-columns:230px minmax(0,1fr) 290px;grid-template-rows:auto minmax(0,1fr) auto;
+  padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+#top{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font-family:var(--f-display);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:14px;display:flex;align-items:center;gap:8px}
+.brand i{width:10px;height:10px;background:var(--accent);transform:skewX(-18deg);display:inline-block}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{border:0;border-radius:0;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.knob{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.knob input{width:80px}
+.spacer{flex:1}
+.grp{display:flex;gap:6px;flex-wrap:wrap}
+aside{background:var(--panel);overflow:auto;min-height:0}
+#left{border-right:1px solid var(--line);padding:10px}
+#right{border-left:1px solid var(--line);padding:10px}
+h3{font-family:var(--f-display);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:14px 0 8px;font-weight:600}
+h3:first-child{margin-top:2px}
+.pal{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pal button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:7px 8px;text-align:left;white-space:normal}
+.pal button b{font-weight:600;font-size:12px}
+.pal button span{color:var(--muted);font-size:10.5px;line-height:1.25}
+.pal button.on span{color:#3d2a05}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.row label{flex:0 0 88px;color:var(--muted);font-size:12px}
+.row .v{font-family:var(--f-mono);font-size:11px;color:var(--fg);min-width:44px;text-align:right}
+.row > input[type=text],.row > select{flex:1}
+.stack{display:flex;flex-direction:column;gap:6px}
+.btns{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.note{color:var(--muted);font-size:11.5px;line-height:1.45}
+.mono{font-family:var(--f-mono)}
+#view{position:relative;min-width:0;min-height:0;background:#05070a}
+#c{position:absolute;inset:0;width:100%;height:100%;display:block}
+.ov{position:absolute;pointer-events:none}
+#hint{top:10px;left:50%;transform:translateX(-50%);background:rgba(18,24,34,.92);border:1px solid var(--accent);color:var(--fg);padding:7px 12px;border-radius:7px;font-size:12px;max-width:90%;text-align:center}
+#fps{left:10px;bottom:8px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);background:rgba(5,7,10,.6);padding:3px 6px;border-radius:4px}
+#onair{top:10px;left:10px;background:var(--tally);color:#fff;font-family:var(--f-display);font-weight:700;letter-spacing:.12em;padding:4px 10px;border-radius:4px;font-size:12px}
+#seatPanel{top:10px;right:10px;background:rgba(18,24,34,.94);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-width:300px;pointer-events:auto}
+#seatPanel b{font-family:var(--f-display);font-size:14px;letter-spacing:.04em}
+#preview{right:10px;bottom:10px;width:32%;max-width:420px;min-width:180px;aspect-ratio:16/9;border:2px solid var(--accent);border-radius:4px}
+#preview span{position:absolute;left:0;top:-22px;background:var(--accent);color:var(--accent-ink);font-family:var(--f-display);font-weight:700;font-size:11px;padding:2px 8px;border-radius:3px 3px 0 0;letter-spacing:.06em}
+#toasts{left:50%;bottom:14px;transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;width:min(560px,92%)}
+.toast{background:#18202c;border:1px solid var(--line);border-left:4px solid var(--sel);padding:8px 12px;border-radius:6px;font-size:12.5px;line-height:1.4;box-shadow:0 6px 24px rgba(0,0,0,.4);pointer-events:auto}
+.toast.err{border-left-color:var(--tally)}
+.toast.ok{border-left-color:var(--ok)}
+#drop{inset:0;background:rgba(245,165,36,.12);border:3px dashed var(--accent);display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-size:22px;letter-spacing:.06em}
+#bottom{grid-column:1/-1;border-top:1px solid var(--line);background:var(--panel)}
+#cuebar{display:flex;gap:10px;align-items:stretch;padding:8px 12px;border-bottom:1px solid var(--line)}
+#cuectl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;max-width:330px}
+#cuectl label{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:12px}
+#cues{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0;padding-bottom:2px}
+.cue{flex:0 0 150px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px;cursor:pointer;position:relative;overflow:hidden;text-align:left;white-space:normal}
+.cue .n{font-family:var(--f-mono);font-size:10px;color:var(--muted)}
+.cue .t{font-weight:600;font-size:12px;margin:1px 0 2px}
+.cue .m{font-size:10.5px;color:var(--muted)}
+.cue.live{border-color:var(--tally)}
+.cue.sel{outline:2px solid var(--sel)}
+.cue .bar{position:absolute;left:0;bottom:0;height:3px;background:var(--tally);width:0}
+#cambar{display:flex;gap:6px;align-items:center;padding:8px 12px;overflow-x:auto}
+#cambar .lbl{font-family:var(--f-display);font-size:11px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-right:4px}
+#cambar button.air{background:var(--tally);border-color:var(--tally);color:#fff;font-weight:600}
+#cambar .sp{flex:1}
+.kbd{font-family:var(--f-mono);font-size:10px;border:1px solid var(--line);border-radius:3px;padding:0 4px;color:var(--muted);margin-right:4px}
+button.on .kbd,button.air .kbd{color:inherit;border-color:currentColor}
+.devlist button{display:flex;justify-content:space-between;width:100%;margin:2px 0;text-align:left;background:transparent;border-color:transparent;padding:4px 6px}
+.devlist button:hover{background:var(--panel2)}
+.devlist small{color:var(--muted)}
+.insp-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.insp-head .tag{font-family:var(--f-display);font-size:10px;letter-spacing:.12em;text-transform:uppercase;background:var(--panel2);border:1px solid var(--line);padding:2px 6px;border-radius:4px;color:var(--accent)}
+.dims{font-family:var(--f-mono);font-size:11.5px;background:#0e141d;border:1px solid var(--line);border-radius:6px;padding:8px;line-height:1.6}
+.xyz{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.xyz input{width:100%}
+hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+@media (max-width:900px){
+  body{overflow:auto}
+  #app{height:auto;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 62vh auto auto auto}
+  #top,#bottom{grid-column:1}
+  #view{grid-row:2}
+  #bottom{grid-row:3}
+  #left{grid-row:4;border-right:0;border-top:1px solid var(--line)}
+  #right{grid-row:5;border-left:0;border-top:1px solid var(--line)}
+  #top,#left,#right,#cuebar,#cambar{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  #cuebar{flex-direction:column}
+  #cuectl{max-width:none}
+  #preview{width:45%}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div id="app">
+  <header id="top">
+    <div class="brand"><i></i>Arena Planner</div>
+    <input id="eventName" type="text" aria-label="Event name" style="width:200px">
+    <div class="seg" role="group" aria-label="Lighting mode">
+      <button id="mShow" class="on">Show</button><button id="mWork">Work light</button><button id="mBlack">Blackout</button>
+    </div>
+    <label class="knob" for="dimmer">Dimmer <input id="dimmer" type="range" min="0" max="1" step="0.01" value="1"></label>
+    <label class="knob" for="haze">Haze <input id="haze" type="range" min="0" max="1" step="0.01" value="0.6"></label>
+    <label class="knob" for="glow">Glow <input id="glow" type="range" min="0" max="1.5" step="0.01" value="0.7"></label>
+    <div class="spacer"></div>
+    <div class="grp">
+      <button id="bImport" class="primary">Import 3D model</button>
+      <button id="bFolder">Import a whole folder</button>
+      <button id="bOpen">Open</button>
+      <button id="bSave">Save project</button>
+      <button id="bShot">Screenshot</button>
+      <button id="bKit">Kit list</button>
+    </div>
+    <input id="fModel" type="file" multiple hidden accept=".fbx,.obj,.mtl,.glb,.gltf,.bin,.dae,.3ds,.stl,.ply,.zip,.png,.jpg,.jpeg,.webp,.tga,.bmp,.gif,.skp,.max,.c4d,.blend,.3dm,.dwg,.rvt,.usdz">
+    <input id="fFolder" type="file" multiple hidden webkitdirectory>
+    <input id="fProject" type="file" hidden accept=".json">
+    <input id="fMedia" type="file" hidden accept="image/*,video/*">
+  </header>
+
+  <aside id="left">
+    <h3>Lights</h3>
+    <div class="pal" id="palLights"></div>
+    <h3>Cameras</h3>
+    <div class="pal" id="palCams"></div>
+    <h3>Rigging</h3>
+    <div class="pal" id="palRig"></div>
+    <p class="note" style="margin-top:8px">Click a type, then click the floor, the stage or a truss. Lights clicked onto a truss hang from it. Hold Shift to place several.</p>
+    <h3>Views</h3>
+    <div class="btns" id="views"></div>
+    <h3>Branding</h3>
+    <div class="row"><label for="teamA">Team A</label><input id="teamA" type="text"></div>
+    <div class="row"><label for="teamB">Team B</label><input id="teamB" type="text"></div>
+    <div class="btns"><button id="bMedia">LED image / video</button><button id="bMediaClear">Clear</button></div>
+    <h3>Venue</h3>
+    <div class="row"><label for="behind">Seats behind stage</label><input id="behind" type="checkbox"></div>
+    <div class="row"><label for="placeholder">Placeholder stage</label><input id="placeholder" type="checkbox" checked></div>
+    <p class="note" id="venueNote"></p>
+    <div class="btns"><button id="bExample">Load example rig</button><button id="bClear" class="danger">Clear rig</button></div>
+  </aside>
+
+  <main id="view">
+    <canvas id="c"></canvas>
+    <div id="hint" class="ov" hidden></div>
+    <div id="onair" class="ov" hidden>ON AIR</div>
+    <div id="seatPanel" class="ov" hidden></div>
+    <div id="preview" class="ov" hidden><span id="previewLbl">PREVIEW</span></div>
+    <div id="fps" class="ov"></div>
+    <div id="toasts" class="ov"></div>
+    <div id="drop" class="ov" hidden>Drop your stage model, textures, ZIP or folder</div>
+  </main>
+
+  <aside id="right"><div id="insp"></div></aside>
+
+  <footer id="bottom">
+    <div id="cuebar">
+      <div id="cuectl">
+        <button id="bPlay" class="primary">Play show</button>
+        <button id="bNext" title="Next cue (G)"><span class="kbd">G</span>Next cue</button>
+        <button id="bRec">Record cue</button>
+        <label><input id="cLoop" type="checkbox" checked> Loop</label>
+        <label><input id="cCams" type="checkbox" checked> Switch cameras</label>
+      </div>
+      <div id="cues"></div>
+    </div>
+    <div id="cambar"></div>
+  </footer>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
+import { TDSLoader } from 'three/addons/loaders/TDSLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { TGALoader } from 'three/addons/loaders/TGALoader.js';
+import { unzipSync } from 'three/addons/libs/fflate.module.js';
+
+const $ = s => document.querySelector(s);
+const DEG = Math.PI/180, FT = 0.3048;
+const FLOOR_W = 250*FT, FLOOR_D = 300*FT, HW = FLOOR_W/2, HD = FLOOR_D/2;
+const SF = -HD + 16;              // stage front edge (z)
+const DECK_H = 1.5;
+const STAGE_C = new THREE.Vector3(0, 3, -HD + 9);
+const V3 = (x=0,y=0,z=0) => new THREE.Vector3(x,y,z);
+const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+const lerp = (a,b,k) => a + (b-a)*k;
+const hash = n => { const s = Math.sin(n*127.1)*43758.5453; return s - Math.floor(s); };
+
+/* ---------- toasts ---------- */
+function toast(msg, kind='info', ms){
+  const el = document.createElement('div'); el.className = 'toast ' + (kind==='err'?'err':kind==='ok'?'ok':'');
+  el.textContent = msg; $('#toasts').appendChild(el);
+  setTimeout(()=>el.remove(), ms || (kind==='err' ? 11000 : 4500));
+}
+
+/* ---------- state ---------- */
+const S = {
+  eventName:'APEX ARENA CUP 2026', teamA:'NOVA', teamB:'VORTEX',
+  mode:'show', dimmer:1, haze:0.6, glow:0.7, behind:false, placeholder:true,
+  devices:[], models:[], cues:[], nextId:1, onAir:null
+};
+let selected = null;     // {kind:'dev'|'model'|'cue', id}
+let placing = null;      // type key
+let seatMode = false, seatReturn = null;
+
+/* ---------- renderer / scene ---------- */
+const canvas = $('#c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05070a);
+scene.fog = new THREE.FogExp2(0x070a0f, 0.006);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1500);
+camera.position.set(62, 52, 78); camera.layers.enableAll();
+const ortho = new THREE.OrthographicCamera(-60, 60, 60, -60, 0.1, 500);
+ortho.position.set(0, 200, 0.01); ortho.lookAt(0,0,0); ortho.layers.enableAll();
+let planMode = false;
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 2, -12); controls.enableDamping = true; controls.maxPolarAngle = Math.PI*0.495;
+const oControls = new OrbitControls(ortho, canvas);
+oControls.enableRotate = false; oControls.screenSpacePanning = true; oControls.enabled = false;
+oControls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+
+const tc = new TransformControls(camera, canvas);
+tc.setSize(0.8);
+tc.getRaycaster().layers.enableAll();
+scene.add(tc);
+tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value && !S.onAir; });
+tc.addEventListener('objectChange', onGizmoMove);
+tc.addEventListener('mouseUp', () => { refreshInspectorValues(); markDirty(); });
+
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+const bloom = new UnrealBloomPass(new THREE.Vector2(512,512), 0.7, 0.55, 0.72);
+composer.addPass(renderPass); composer.addPass(bloom); composer.addPass(new OutputPass());
+
+const hemi = new THREE.HemisphereLight(0xcfd8ff, 0x20242c, 0.05); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 0); sun.position.set(30, 60, 40); scene.add(sun);
+
+/* ---------- venue ---------- */
+const venue = new THREE.Group(); scene.add(venue);
+const placeTargets = [];   // meshes you can place onto
+const floorMat = new THREE.MeshStandardMaterial({ color:0x1b212b, roughness:0.82, metalness:0.05 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_W, FLOOR_D), floorMat);
+floor.rotation.x = -Math.PI/2; floor.name = 'floor'; venue.add(floor); placeTargets.push(floor);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color:0x0c0f14, roughness:1 }));
+ground.rotation.x = -Math.PI/2; ground.position.y = -0.02; venue.add(ground); placeTargets.push(ground);
+{ // 10 ft grid, brighter every 50 ft
+  const minor = [], major = [];
+  for (let i=0;i<=25;i++){ const x = -HW + i*10*FT; (i%5?minor:major).push(x,0.01,-HD, x,0.01,HD); }
+  for (let j=0;j<=30;j++){ const z = -HD + j*10*FT; (j%5?minor:major).push(-HW,0.01,z, HW,0.01,z); }
+  const mk = (arr,c,o) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr,3));
+    return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color:c, transparent:true, opacity:o })); };
+  venue.add(mk(minor, 0x3a4658, 0.35)); venue.add(mk(major, 0x5a6a82, 0.55));
+}
+function labelSprite(text, w, size=64, color='#8fa0b8'){
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 128;
+  const g = cv.getContext('2d'); g.fillStyle = color; g.font = `600 ${size}px "Chakra Petch", sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 512, 64);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w/8), new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false, opacity:0.75 }));
+  m.rotation.x = -Math.PI/2; m.raycast = ()=>{}; m.userData.redraw = () => { g.clearRect(0,0,1024,128); g.fillText(text,512,64); tex.needsUpdate = true; };
+  return m;
+}
+const floorLabel = labelSprite('ARENA FLOOR  ·  250 × 300 FT', 40); floorLabel.position.set(0, 0.03, 20); venue.add(floorLabel);
+// FOH platform
+const fohGroup = new THREE.Group(); venue.add(fohGroup);
+{
+  const plat = new THREE.Mesh(new THREE.BoxGeometry(8, 0.6, 5), new THREE.MeshStandardMaterial({ color:0x262d38, roughness:.7 }));
+  plat.position.set(0, 0.3, 13); fohGroup.add(plat); placeTargets.push(plat);
+  const desk = new THREE.Mesh(new THREE.BoxGeometry(6, 0.9, 1.1), new THREE.MeshStandardMaterial({ color:0x15191f, roughness:.5 }));
+  desk.position.set(0, 1.05, 13.6); fohGroup.add(desk);
+  const scr = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.02, 0.8), new THREE.MeshBasicMaterial({ color:0x24406a }));
+  scr.position.set(0, 1.51, 13.6); fohGroup.add(scr);
+  const l = labelSprite('FOH', 8); l.position.set(0, 0.62, 11.2); fohGroup.add(l);
+}
+
+/* ----- LED content (canvas) ----- */
+const ledCv = document.createElement('canvas'); ledCv.width = 1536; ledCv.height = 544;
+const ledCtx = ledCv.getContext('2d');
+const ledTex = new THREE.CanvasTexture(ledCv); ledTex.colorSpace = THREE.SRGBColorSpace;
+const ribCv = document.createElement('canvas'); ribCv.width = 2048; ribCv.height = 64;
+const ribCtx = ribCv.getContext('2d');
+const ribTex = new THREE.CanvasTexture(ribCv); ribTex.colorSpace = THREE.SRGBColorSpace;
+ribTex.wrapS = THREE.RepeatWrapping;
+let mediaTex = null, mediaEl = null;
+const ledMats = [];
+function ledMaterial(){ const m = new THREE.MeshBasicMaterial({ map:ledTex, color:0xffffff }); ledMats.push(m); return m; }
+function drawLED(t){
+  const g = ledCtx, W = ledCv.width, H = ledCv.height;
+  const hue = (t*6) % 360;
+  const gr = g.createLinearGradient(0,0,W,H);
+  gr.addColorStop(0, `hsl(${hue},75%,10%)`); gr.addColorStop(1, `hsl(${(hue+70)%360},85%,22%)`);
+  g.fillStyle = gr; g.fillRect(0,0,W,H);
+  g.save(); g.globalAlpha = .07; g.fillStyle = '#fff';
+  for (let i=-4;i<20;i++){ const x = ((i*120 + t*60) % (W+480)) - 240; g.beginPath(); g.moveTo(x,0); g.lineTo(x+60,0); g.lineTo(x-140,H); g.lineTo(x-200,H); g.fill(); }
+  g.restore();
+  g.fillStyle = '#ff3b3b'; g.fillRect(48, 40, 112, 44); g.fillStyle = '#fff'; g.font = '700 30px "Chakra Petch", sans-serif';
+  g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillText('LIVE', 104, 63);
+  g.textAlign = 'left'; g.fillStyle = 'rgba(255,255,255,.75)'; g.font = '600 28px "Chakra Petch", sans-serif'; g.fillText('GRAND FINAL · BEST OF 5', 182, 63);
+  g.textAlign = 'center'; g.fillStyle = '#fff';
+  let fs = 112; g.font = `700 ${fs}px "Chakra Petch", sans-serif`;
+  while (g.measureText(S.eventName).width > W-120 && fs > 40){ fs -= 6; g.font = `700 ${fs}px "Chakra Petch", sans-serif`; }
+  g.fillText(S.eventName, W/2, 210);
+  g.font = '700 84px "Chakra Petch", sans-serif';
+  g.fillStyle = '#4cc3ff'; g.textAlign = 'right'; g.fillText(S.teamA, W/2 - 90, 380);
+  g.fillStyle = '#ff7a3d'; g.textAlign = 'left'; g.fillText(S.teamB, W/2 + 90, 380);
+  g.fillStyle = 'rgba(255,255,255,.85)'; g.textAlign = 'center'; g.font = '600 52px "Chakra Petch", sans-serif'; g.fillText('VS', W/2, 382);
+  const p = (Math.sin(t*0.7)*0.5+0.5);
+  g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(160, 470, W-320, 14);
+  g.fillStyle = '#4cc3ff'; g.fillRect(160, 470, (W-320)*p*0.5, 14);
+  g.fillStyle = '#ff7a3d'; g.fillRect(W-160-(W-320)*(1-p)*0.5, 470, (W-320)*(1-p)*0.5, 14);
+  ledTex.needsUpdate = true;
+  const r = ribCtx; r.fillStyle = '#05070c'; r.fillRect(0,0,2048,64);
+  r.font = '700 40px "Chakra Petch", sans-serif'; r.textBaseline = 'middle';
+  const seg = `${S.eventName}   ◆   ${S.teamA} VS ${S.teamB}   ◆   `;
+  let x = 0; let k = 0; while (x < 2048){ r.fillStyle = k%2 ? '#ff7a3d' : '#4cc3ff'; r.fillText(seg, x, 33); x += r.measureText(seg).width; k++; }
+  ribTex.needsUpdate = true;
+}
+function ledSource(){ return mediaTex || ledTex; }
+
+/* ----- placeholder stage ----- */
+const stageGroup = new THREE.Group(); venue.add(stageGroup);
+{
+  const deckMat = new THREE.MeshStandardMaterial({ color:0x1e2530, roughness:.55, metalness:.1 });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(36, DECK_H, 15), deckMat);
+  deck.position.set(0, DECK_H/2, -HD + 1 + 7.5); stageGroup.add(deck); placeTargets.push(deck);
+  const lip = new THREE.Mesh(new THREE.PlaneGeometry(36, DECK_H*0.6), new THREE.MeshBasicMaterial({ map:ribTex }));
+  lip.position.set(0, DECK_H*0.5, SF + 0.01); stageGroup.add(lip); lip.userData.rib = true;
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(24, 8.5), ledMaterial());
+  wall.position.set(0, DECK_H + 1 + 4.25, -HD + 2.2); stageGroup.add(wall);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(24.6, 9.1, 0.4), new THREE.MeshStandardMaterial({ color:0x0d1015, roughness:.6 }));
+  frame.position.set(0, DECK_H + 1 + 4.25, -HD + 1.95); stageGroup.add(frame);
+  for (const sx of [-1,1]){
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(7, 3.94), ledMaterial());
+    s.position.set(sx*21.5, 7.5, -HD + 6); s.rotation.y = -sx*0.35; stageGroup.add(s);
+  }
+  // player desks: 5 per team
+  const deskMat = new THREE.MeshStandardMaterial({ color:0x0f1318, roughness:.4, metalness:.3 });
+  const monMatA = new THREE.MeshBasicMaterial({ color:0x2a6fb0 }), monMatB = new THREE.MeshBasicMaterial({ color:0xb0542a });
+  const chairMat = new THREE.MeshStandardMaterial({ color:0x2a2f38, roughness:.6 });
+  for (const side of [-1,1]){
+    const tableTop = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.08, 1.0), deskMat);
+    tableTop.position.set(side*7.5, DECK_H + 0.75, -HD + 10.5); stageGroup.add(tableTop);
+    const front = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.72, 0.06), side<0?monMatA:monMatB);
+    front.position.set(side*7.5, DECK_H + 0.36, -HD + 11.0); stageGroup.add(front);
+    for (let i=0;i<5;i++){
+      const x = side*(3.5 + i*2);
+      const mon = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.38, 0.04), side<0?monMatA:monMatB);
+      mon.position.set(x, DECK_H + 1.02, -HD + 10.25); stageGroup.add(mon);
+      const ch = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.2, 0.55), chairMat);
+      ch.position.set(x, DECK_H + 0.6, -HD + 9.4); stageGroup.add(ch);
+    }
+  }
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.0, 0.9), deskMat);
+  caster.position.set(0, DECK_H + 0.5, -HD + 13.4); stageGroup.add(caster);
+  const l = labelSprite('STAGE  ·  PLACEHOLDER', 22, 64, '#a7b4c8'); l.position.set(0, DECK_H + 0.02, SF - 1.3); stageGroup.add(l);
+}
+
+/* ----- seating ----- */
+const standGroup = new THREE.Group(); venue.add(standGroup);
+let seatMesh = null, seatInfo = null, seatCount = 0;
+const STANDS = [
+  { name:'West stand',  start:V3(-HW-1.5,0,-HD+6), u:V3(0,0,1),  o:V3(-1,0,0), L:FLOOR_D-8 },
+  { name:'East stand',  start:V3(HW+1.5,0,HD-2),   u:V3(0,0,-1), o:V3(1,0,0),  L:FLOOR_D-8 },
+  { name:'South stand', start:V3(-HW+2,0,HD+1.5),  u:V3(1,0,0),  o:V3(0,0,1),  L:FLOOR_W-4 },
+  { name:'North stand (behind stage)', start:V3(HW-2,0,-HD-1.5), u:V3(-1,0,0), o:V3(0,0,-1), L:FLOOR_W-4, behind:true },
+];
+const ROWS = 22, ROW_D = 0.85, RISE = 0.42, ROW0_H = 1.2, SEAT_W = 0.55;
+function buildStands(){
+  standGroup.clear(); for (let i=placeTargets.length-1;i>=0;i--) if (placeTargets[i].userData.stand) placeTargets.splice(i,1);
+  const riserMat = new THREE.MeshStandardMaterial({ color:0x2a3240, roughness:.9 });
+  const cushion = new THREE.BoxGeometry(0.46, 0.1, 0.42); cushion.translate(0, 0.42, 0.02);
+  const back = new THREE.BoxGeometry(0.46, 0.45, 0.07); back.translate(0, 0.68, -0.2);
+  const seatGeo = mergeGeometries([cushion, back]);
+  const seatMat = new THREE.MeshStandardMaterial({ color:0x45608c, roughness:.7, emissive:0x1c2c48, emissiveIntensity:1 });
+  const list = []; const info = [];
+  STANDS.forEach((st, si) => {
+    if (st.behind && !S.behind) return;
+    const f = st.o.clone().negate(); const yawSeat = Math.atan2(f.x, f.z); const yawBox = Math.atan2(-st.u.z, st.u.x);
+    for (let r=0;r<ROWS;r++){
+      const top = ROW0_H + r*RISE, dist = r*ROW_D + ROW_D/2;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(st.L, top, ROW_D), riserMat);
+      box.position.copy(st.start).addScaledVector(st.u, st.L/2).addScaledVector(st.o, dist); box.position.y = top/2;
+      box.rotation.y = yawBox; box.userData.stand = true; standGroup.add(box); placeTargets.push(box);
+      const n = Math.floor((st.L - 0.6)/SEAT_W); let seatNo = 0;
+      for (let i=0;i<n;i++){
+        if (i % 27 === 26) continue; // aisle
+        seatNo++;
+        const p = st.start.clone().addScaledVector(st.u, 0.3 + i*SEAT_W + SEAT_W/2).addScaledVector(st.o, dist + 0.05); p.y = top;
+        list.push({ p, yaw:yawSeat }); info.push([si, r+1, seatNo]);
+      }
+    }
+    const rib = new THREE.Mesh(new THREE.PlaneGeometry(st.L, 0.9), new THREE.MeshBasicMaterial({ map:ribTex }));
+    rib.position.copy(st.start).addScaledVector(st.u, st.L/2).addScaledVector(st.o, -0.02); rib.position.y = 0.62;
+    rib.rotation.y = yawSeat; rib.raycast = ()=>{}; rib.userData.rib = true; standGroup.add(rib);
+    const lb = labelSprite(st.name.toUpperCase(), 24); lb.position.copy(st.start).addScaledVector(st.u, st.L/2).addScaledVector(st.o, -4);
+    lb.position.y = 0.04; lb.rotation.z = yawSeat; standGroup.add(lb);
+  });
+  seatMesh = new THREE.InstancedMesh(seatGeo, seatMat, list.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = V3(1,1,1);
+  list.forEach((s,i) => { q.setFromAxisAngle(V3(0,1,0), s.yaw); m.compose(s.p, q, one); seatMesh.setMatrixAt(i, m); });
+  seatMesh.instanceMatrix.needsUpdate = true; seatMesh.computeBoundingSphere();
+  standGroup.add(seatMesh); seatInfo = info; seatCount = list.length;
+  $('#venueNote').textContent = `Floor 250 × 300 ft (76.2 × 91.4 m), 10 ft grid. ${seatCount.toLocaleString()} seats in ${S.behind?4:3} stands, ${ROWS} rows each.`;
+}
+
+/* ---------- device types ---------- */
+const TYPE = {
+  moving:{ label:'Moving Head', kind:'light', real:true, base:340, pri:2, sub:'Beam, sweeps, ballyhoo',
+    d:{ on:true,intensity:1,color:'#4aa8ff',angle:7,pan:0,tilt:25,effect:'none',speed:1,phase:0 },
+    effects:['none','sweep','circle','ballyhoo','strobe','colour cycle'] },
+  wash:{ label:'LED Wash', kind:'light', real:true, base:300, pri:1, sub:'Soft wide colour',
+    d:{ on:true,intensity:1,color:'#7a3cff',angle:38,pan:0,tilt:20,effect:'none',speed:1,phase:0 },
+    effects:['none','pulse','chase','colour cycle'] },
+  strobe:{ label:'Strobe', kind:'light', real:true, base:900, pri:4, sub:'Flash rate, spread',
+    d:{ on:true,intensity:1,color:'#ffffff',angle:80,pan:0,tilt:35,effect:'flash',rate:6,speed:1,phase:0 },
+    effects:['flash','random','steady'] },
+  stadium:{ label:'Stadium Light', kind:'light', real:true, base:5200, pri:0, sub:'Long white throw',
+    d:{ on:true,intensity:1,color:'#fff1dc',angle:16,pan:0,tilt:60,effect:'none',speed:1,phase:0 },
+    effects:['none','fade pulse'] },
+  toner:{ label:'Audience Toner', kind:'light', real:true, base:700, pri:3, sub:'2/4/8-cell blinder',
+    d:{ on:true,intensity:0.8,color:'#ffb060',angle:55,pan:180,tilt:95,cells:4,effect:'warm pulse',speed:1,phase:0 },
+    effects:['none','warm pulse','chase'] },
+  matrix:{ label:'Static Matrix', kind:'light', real:false, sub:'5×5 pixel panel',
+    d:{ on:true,intensity:1,color:'#ff4fd8',color2:'#2a7bff',pan:180,tilt:90,pattern:'wave',speed:1,phase:0 },
+    patterns:['wave','chase','rings','checker','sparkle'] },
+  laser:{ label:'Laser', kind:'light', real:false, sub:'1–24 beams, fan/scan',
+    d:{ on:true,intensity:1,color:'#2bff7a',beams:8,spread:40,pan:180,tilt:80,pattern:'fan',speed:1,phase:0 },
+    patterns:['fan','scan','cone','wave'] },
+  pyro:{ label:'Pyro', kind:'light', real:false, sub:'Sparks, flame, airburst',
+    d:{ on:true,style:'fountain',height:6,duration:2.5,auto:0,color:'#ffbb55' }, styles:['fountain','flame jet','airburst'] },
+  cam_tripod:{ label:'Tripod', kind:'camera', sub:'Fixed position', d:{ focal:50,pan:0,tilt:-3,height:1.7,motion:'none' } },
+  cam_jib:{ label:'Jib / crane', kind:'camera', sub:'Arm, swing, elevation', d:{ focal:24,pan:0,tilt:-12,arm:8,swing:0,elev:20,motion:'none' } },
+  cam_ptz:{ label:'PTZ', kind:'camera', sub:'Remote head', d:{ focal:35,pan:0,tilt:-8,height:2.4,motion:'none' } },
+  cam_steadi:{ label:'Steadicam', kind:'camera', sub:'Roaming operator', d:{ focal:28,pan:0,tilt:-2,height:1.5,motion:'none' } },
+  truss:{ label:'Truss', kind:'truss', sub:'Box truss, any length', d:{ length:24, rotY:0 } },
+};
+const STRUCT = new Set(['cells','beams','length']);
+function schema(type){
+  const T = TYPE[type], k = T.kind, f = [];
+  if (k==='light' && type!=='pyro'){
+    f.push({k:'on',l:'On',t:'bool'},{k:'intensity',l:'Intensity',t:'range',min:0,max:1,step:.01},{k:'color',l:'Colour',t:'color'});
+    if (type==='matrix') f.push({k:'color2',l:'Colour 2',t:'color'},{k:'pattern',l:'Pattern',t:'select',o:T.patterns});
+    else if (type==='laser') f.push({k:'beams',l:'Beams',t:'range',min:1,max:24,step:1},{k:'spread',l:'Spread °',t:'range',min:2,max:120,step:1},{k:'pattern',l:'Pattern',t:'select',o:T.patterns});
+    else f.push({k:'effect',l:'Effect',t:'select',o:T.effects},{k:'angle',l:type==='strobe'?'Spread °':'Beam angle °',t:'range',min:type==='moving'?2:8,max:type==='moving'?40:110,step:1});
+    if (type==='strobe') f.push({k:'rate',l:'Flash rate Hz',t:'range',min:.5,max:25,step:.5});
+    if (type==='toner') f.push({k:'cells',l:'Cells',t:'select',o:[2,4,8]});
+    f.push({k:'speed',l:'Speed',t:'range',min:.1,max:3,step:.05},{k:'phase',l:'Phase',t:'range',min:0,max:1,step:.01},
+      {k:'pan',l:'Pan °',t:'range',min:-180,max:180,step:1},{k:'tilt',l:'Tilt °',t:'range',min:0,max:180,step:1});
+  } else if (type==='pyro'){
+    f.push({k:'style',l:'Style',t:'select',o:T.styles},{k:'height',l:'Height m',t:'range',min:1,max:30,step:.5},
+      {k:'duration',l:'Duration s',t:'range',min:.3,max:8,step:.1},{k:'auto',l:'Auto fire every s (0 = off)',t:'range',min:0,max:30,step:1},{k:'color',l:'Colour',t:'color'});
+  } else if (k==='camera'){
+    f.push({k:'focal',l:'Focal mm',t:'range',min:8,max:400,step:1},{k:'pan',l:'Pan °',t:'range',min:-180,max:180,step:.5},{k:'tilt',l:'Tilt °',t:'range',min:-80,max:60,step:.5});
+    if (type==='cam_jib') f.push({k:'arm',l:'Arm m',t:'range',min:2,max:15,step:.1},{k:'swing',l:'Swing °',t:'range',min:-180,max:180,step:1},{k:'elev',l:'Elevation °',t:'range',min:-40,max:60,step:1});
+    else f.push({k:'height',l:'Lens height m',t:'range',min:.3,max:12,step:.05});
+    f.push({k:'motion',l:'Motion preview',t:'select',o:type==='cam_jib'?['none','pan sweep','jib arc']:['none','pan sweep']});
+  } else if (k==='truss'){
+    f.push({k:'length',l:'Length m',t:'range',min:2,max:40,step:.5},{k:'rotY',l:'Rotation °',t:'range',min:-180,max:180,step:1});
+  }
+  return f;
+}
+
+/* ---------- shared materials / geometry ---------- */
+const bodyMat = new THREE.MeshStandardMaterial({ color:0x2a2f37, roughness:.45, metalness:.5 });
+const trussMat = new THREE.MeshStandardMaterial({ color:0xa4adb8, roughness:.35, metalness:.85 });
+const beamVS = `varying float vF; varying vec3 vN; varying vec3 vV;
+void main(){ vF = -position.y; vec4 wp = modelMatrix*vec4(position,1.0); vN = normalize(mat3(modelMatrix)*normal); vV = normalize(cameraPosition - wp.xyz); gl_Position = projectionMatrix*viewMatrix*wp; }`;
+const beamFS = `uniform vec3 uColor; uniform float uAlpha; varying float vF; varying vec3 vN; varying vec3 vV;
+void main(){ float f = clamp(vF,0.0,1.0); float e = pow(abs(dot(normalize(vN), normalize(vV))), 1.4); float a = uAlpha*(1.0-f)*(1.0-f*0.4)*e; gl_FragColor = vec4(uColor, a); }`;
+const coneGeo = new THREE.ConeGeometry(1, 1, 28, 1, true); coneGeo.translate(0, -0.5, 0);
+function beamMesh(){
+  const m = new THREE.Mesh(coneGeo, new THREE.ShaderMaterial({ vertexShader:beamVS, fragmentShader:beamFS,
+    uniforms:{ uColor:{value:new THREE.Color()}, uAlpha:{value:0} }, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide, fog:false }));
+  m.raycast = ()=>{}; m.frustumCulled = false; return m;
+}
+const laserGeo = new THREE.BoxGeometry(0.025, 1, 0.025); laserGeo.translate(0, -0.5, 0);
+
+/* light pool: only 16 real lights for speed */
+const POOL = 16, pool = [];
+for (let i=0;i<POOL;i++){ const l = new THREE.SpotLight(0xffffff, 0, 0, 0.3, 0.45, 2); scene.add(l); scene.add(l.target); pool.push(l); }
+const pyroLights = []; for (let i=0;i<4;i++){ const l = new THREE.PointLight(0xff8a30, 0, 40, 2); scene.add(l); pyroLights.push(l); }
+
+/* ---------- device build ---------- */
+const devGroup = new THREE.Group(); scene.add(devGroup);
+function dirFrom(pan, tilt, out=V3()){ const p = pan*DEG, t = tilt*DEG; return out.set(-Math.sin(t)*Math.sin(p), -Math.cos(t), -Math.sin(t)*Math.cos(p)); }
+function tagPick(obj, id){ obj.traverse(o => { if (o.isMesh) o.userData.devId = id; }); }
+
+function buildDevice(d){
+  if (d.rt) { devGroup.remove(d.rt.g); if (d.rt.helper) { scene.remove(d.rt.helper); scene.remove(d.rt.hcam); } if (d.rt.cam) scene.remove(d.rt.cam); }
+  const T = TYPE[d.type], g = new THREE.Group(); const rt = { g }; d.rt = rt;
+  g.position.set(d.pos[0], d.pos[1], d.pos[2]);
+  if (T.kind==='light'){
+    const hung = d.mount==='hung', sgn = hung ? -1 : 1;
+    if (d.type!=='pyro'){
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.32), bodyMat); base.position.y = sgn*0.06; g.add(base);
+      if (hung){ const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), bodyMat); clamp.position.y = 0.1; g.add(clamp); }
+      const head = new THREE.Group(); head.position.y = sgn*0.34; g.add(head); rt.head = head;
+      rt.lensMat = new THREE.MeshBasicMaterial({ color:0x000000 });
+      let geo, lensGeo;
+      switch(d.type){
+        case 'moving': geo = new THREE.CylinderGeometry(0.16,0.2,0.42,18); lensGeo = new THREE.CircleGeometry(0.13,18); break;
+        case 'wash': geo = new THREE.CylinderGeometry(0.2,0.2,0.34,18); lensGeo = new THREE.CircleGeometry(0.18,18); break;
+        case 'strobe': geo = new THREE.BoxGeometry(0.62,0.16,0.22); lensGeo = new THREE.PlaneGeometry(0.56,0.17); break;
+        case 'stadium': geo = new THREE.BoxGeometry(0.7,0.24,0.7); lensGeo = new THREE.PlaneGeometry(0.62,0.62); break;
+        case 'toner': { const c = +d.p.cells||4; const cols = c===2?2:c===4?2:4, rows = c===2?1:2;
+          geo = new THREE.BoxGeometry(cols*0.3+0.06, 0.2, rows*0.3+0.06); lensGeo = null; rt.cells = [];
+          for (let i=0;i<c;i++){ const cm = new THREE.MeshBasicMaterial({ color:0 }); const cell = new THREE.Mesh(new THREE.CircleGeometry(0.12,16), cm);
+            cell.rotation.x = Math.PI/2; cell.position.set((i%cols - (cols-1)/2)*0.3, -0.105, (Math.floor(i/cols) - (rows-1)/2)*0.3); head.add(cell); rt.cells.push(cm); }
+          break; }
+        case 'matrix': { geo = new THREE.BoxGeometry(0.66,0.08,0.66); lensGeo = null;
+          const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.1,0.1), new THREE.MeshBasicMaterial({ color:0xffffff }), 25);
+          const m = new THREE.Matrix4(), q = new THREE.Quaternion().setFromAxisAngle(V3(1,0,0), Math.PI/2);
+          for (let i=0;i<25;i++){ m.compose(V3((i%5-2)*0.125, -0.045, (Math.floor(i/5)-2)*0.125), q, V3(1,1,1)); im.setMatrixAt(i, m); im.setColorAt(i, new THREE.Color(0)); }
+          head.add(im); rt.pix = im; break; }
+        case 'laser': geo = new THREE.BoxGeometry(0.34,0.22,0.3); lensGeo = new THREE.CircleGeometry(0.04,10); break;
+      }
+      const hm = new THREE.Mesh(geo, bodyMat); head.add(hm);
+      if (lensGeo){ const lens = new THREE.Mesh(lensGeo, rt.lensMat); lens.rotation.x = Math.PI/2; lens.position.y = -0.215; head.add(lens); }
+      if (T.real || d.type==='strobe'){ rt.beam = beamMesh(); scene.add(rt.beam); }
+      if (d.type==='laser'){
+        rt.lasers = []; rt.laserMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false });
+        for (let i=0;i<(+d.p.beams||1);i++){ const b = new THREE.Mesh(laserGeo, rt.laserMat); b.raycast=()=>{}; b.frustumCulled=false; scene.add(b); rt.lasers.push(b); }
+      }
+    } else {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.32,0.42), new THREE.MeshStandardMaterial({ color:0x141414, roughness:.6 })); box.position.y = 0.16; g.add(box);
+      const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.07,0.12,10), bodyMat); noz.position.y = 0.38; g.add(noz);
+      rt.fireT = -99; rt.lastAuto = performance.now()/1000; rt.burst = false;
+    }
+  } else if (T.kind==='camera'){
+    const legs = new THREE.Group(); g.add(legs);
+    const headG = new THREE.Group(); scene.add(headG); rt.camHead = headG;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.24,0.42), new THREE.MeshStandardMaterial({ color:0x1a1d22, roughness:.4, metalness:.4 })); headG.add(body);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,0.32,14), bodyMat); lens.rotation.x = Math.PI/2; lens.position.z = -0.34; headG.add(lens);
+    rt.tally = new THREE.MeshBasicMaterial({ color:0x330000 }); const tl = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,0.04), rt.tally); tl.position.set(0,0.14,-0.1); headG.add(tl);
+    tagPick(headG, d.id);
+    if (d.type==='cam_tripod' || d.type==='cam_ptz'){
+      const h = d.type==='cam_ptz' ? 0 : 1;
+      for (let i=0;i<3*h;i++){ const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.02,1.6,6), bodyMat); const a = i*2.094;
+        leg.position.set(Math.sin(a)*0.25, 0.75, Math.cos(a)*0.25); leg.rotation.set(Math.cos(a)*0.32, 0, -Math.sin(a)*0.32); legs.add(leg); }
+      rt.post = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,1,8), bodyMat); legs.add(rt.post);
+    } else if (d.type==='cam_jib'){
+      const dolly = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.25,1.2), bodyMat); dolly.position.y = 0.12; legs.add(dolly);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,1.6,10), bodyMat); col.position.y = 1.0; legs.add(col);
+      rt.arm = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.14,1), trussMat); scene.add(rt.arm); tagPick(rt.arm, d.id);
+      rt.cw = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.4), bodyMat); scene.add(rt.cw);
+    } else {
+      const op = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 1.0, 4, 10), new THREE.MeshStandardMaterial({ color:0x30343c, roughness:.8 })); op.position.y = 0.75; legs.add(op);
+      const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,0.9,6), bodyMat); vest.position.set(0.3,1.0,-0.1); legs.add(vest);
+    }
+    rt.cam = new THREE.PerspectiveCamera(30, 16/9, 0.1, 1000); scene.add(rt.cam);
+    rt.hcam = new THREE.PerspectiveCamera(30, 16/9, 0.3, 4); scene.add(rt.hcam);
+    rt.helper = new THREE.CameraHelper(rt.hcam);
+    rt.helper.layers.set(1); rt.helper.raycast = ()=>{}; scene.add(rt.helper);
+  } else if (T.kind==='truss'){
+    const L = +d.p.length, w = 0.4;
+    for (const [y,z] of [[w/2,w/2],[w/2,-w/2],[-w/2,w/2],[-w/2,-w/2]]){ const c = new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,L,6), trussMat); c.rotation.z = Math.PI/2; c.position.set(0,y,z); g.add(c); }
+    const n = Math.max(2, Math.round(L/0.5)); const rung = new THREE.CylinderGeometry(0.012,0.012,w*1.41,4);
+    const im = new THREE.InstancedMesh(rung, trussMat, n*4); const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+    let k = 0; for (let i=0;i<n;i++){ const x = -L/2 + (i+0.5)*(L/n), s = i%2?1:-1;
+      for (const [rx, py, pz] of [[s*0.785,0,w/2],[ -s*0.785,0,-w/2]]){ e.set(rx,0,0); q.setFromEuler(e); m.compose(V3(x,py,pz),q,V3(1,1,1)); im.setMatrixAt(k++, m); }
+      for (const py of [w/2,-w/2]){ e.set(Math.PI/2, 0, s*0.785); q.setFromEuler(e); m.compose(V3(x,py,0),q,V3(1,1,1)); im.setMatrixAt(k++, m); } }
+    g.add(im);
+    const pick = new THREE.Mesh(new THREE.BoxGeometry(L, w+0.2, w+0.2), new THREE.MeshBasicMaterial()); pick.visible = false; pick.userData.truss = d.id; g.add(pick);
+    g.rotation.y = (+d.p.rotY||0)*DEG; rt.pick = pick;
+  }
+  if (T.kind!=='camera') tagPick(g, d.id); else tagPick(g, d.id);
+  devGroup.add(g);
+}
+function disposeDevice(d){
+  if (!d.rt) return; const rt = d.rt; devGroup.remove(rt.g);
+  for (const o of [rt.beam, rt.camHead, rt.cam, rt.hcam, rt.helper, rt.arm, rt.cw]) if (o) scene.remove(o);
+  if (rt.lasers) rt.lasers.forEach(b => scene.remove(b));
+  d.rt = null;
+}
+function rebuild(d){ disposeDevice(d); buildDevice(d); if (selected && selected.kind==='dev' && selected.id===d.id) tc.attach(d.rt.g); }
+
+function addDevice(type, pos, extra={}){
+  const T = TYPE[type];
+  const d = { id:S.nextId++, type, name:'', pos:[pos.x,pos.y,pos.z], mount:extra.mount||'floor', p:{ ...T.d, ...(extra.p||{}) } };
+  const n = S.devices.filter(x=>x.type===type).length + 1;
+  d.name = extra.name || `${T.label} ${n}`;
+  S.devices.push(d); buildDevice(d); return d;
+}
+const getDev = id => S.devices.find(d => d.id===id);
+
+/* aim helpers */
+function headPos(d, out=V3()){ out.set(d.pos[0], d.pos[1], d.pos[2]); if (d.type!=='pyro') out.y += (d.mount==='hung'?-0.34:0.34); return out; }
+function aimLight(d, target){ const h = headPos(d); const v = target.clone().sub(h).normalize(); d.p.tilt = Math.round(Math.acos(clamp(-v.y,-1,1))/DEG); d.p.pan = Math.round(Math.atan2(-v.x, -v.z)/DEG); }
+function camLens(d, t=0, out=V3()){
+  const p = d.p;
+  if (d.type==='cam_jib'){
+    let s = p.swing, e = p.elev; if (p.motion==='jib arc'){ s += 35*Math.sin(t*0.35); e += 10*Math.sin(t*0.5); }
+    s*=DEG; e*=DEG; const piv = V3(d.pos[0], d.pos[1]+1.8, d.pos[2]);
+    return out.copy(piv).add(V3(-Math.sin(s)*Math.cos(e), Math.sin(e), -Math.cos(s)*Math.cos(e)).multiplyScalar(p.arm));
+  }
+  return out.set(d.pos[0], d.pos[1] + (+p.height), d.pos[2]);
+}
+function aimCam(d, target){ const l = camLens(d); const v = target.clone().sub(l); d.p.pan = +(Math.atan2(-v.x, -v.z)/DEG).toFixed(1); d.p.tilt = +(Math.atan2(v.y, Math.hypot(v.x, v.z))/DEG).toFixed(1); }
+
+/* ---------- per-frame light evaluation ---------- */
+const tmpC = new THREE.Color(), tmpV = V3(), tmpV2 = V3(), tmpQ = new THREE.Quaternion(), DOWN = V3(0,-1,0);
+function evalLight(d, t){
+  const p = d.p; let out = p.on===false ? 0 : +p.intensity; let pan = +p.pan, tilt = +p.tilt;
+  const col = new THREE.Color(p.color); const ph = (+p.phase||0)*Math.PI*2, tt = t*(+p.speed||1);
+  switch(p.effect){
+    case 'sweep': pan += 35*Math.sin(tt*1.2 + ph); break;
+    case 'circle': pan += 22*Math.sin(tt*1.5 + ph); tilt += 14*Math.cos(tt*1.5 + ph); break;
+    case 'ballyhoo': pan += 50*Math.sin(tt*0.9 + ph) + 18*Math.sin(tt*2.3 + ph*2); tilt += 20*Math.sin(tt*1.7 + ph*1.3); break;
+    case 'strobe': out *= (Math.sin(tt*Math.PI*10 + ph) > 0.55 ? 1 : 0); break;
+    case 'colour cycle': col.setHSL(((tt*0.08 + (+p.phase||0)) % 1 + 1) % 1, 1, 0.55); break;
+    case 'pulse': out *= 0.3 + 0.7*(0.5 + 0.5*Math.sin(tt*3 + ph)); break;
+    case 'chase': out *= Math.pow(Math.max(0, Math.sin(tt*4 + ph)), 2); break;
+    case 'flash': { const r = +p.rate||6; out *= (((t*r + (+p.phase||0)) % 1) < 0.18 ? 1 : 0); break; }
+    case 'random': { const r = +p.rate||6; out *= hash(Math.floor(t*r) + d.id*13.7) > 0.72 ? 1 : 0; break; }
+    case 'fade pulse': out *= 0.55 + 0.45*Math.sin(tt*1.2 + ph); break;
+    case 'warm pulse': out *= 0.35 + 0.65*(0.5 + 0.5*Math.sin(tt*2 + ph)); break;
+  }
+  return { out, pan, tilt, col };
+}
+const modeK = () => S.mode==='blackout' ? 0 : 1;
+function updateLights(t, dt){
+  const cand = [];
+  const beamK = S.mode==='show' ? (0.15 + S.haze*0.85) : S.mode==='work' ? 0.06 : 0;
+  for (const d of S.devices){
+    if (TYPE[d.type].kind!=='light' || !d.rt) continue;
+    const rt = d.rt;
+    if (d.type==='pyro'){ updatePyroDev(d, t); continue; }
+    const ev = evalLight(d, t); const out = ev.out * S.dimmer * modeK();
+    const dir = dirFrom(ev.pan, ev.tilt, V3());
+    const hp = headPos(d, V3());
+    tmpQ.setFromUnitVectors(DOWN, dir); rt.head.quaternion.copy(tmpQ);
+    if (rt.lensMat) rt.lensMat.color.copy(ev.col).multiplyScalar(out*3);
+    if (rt.cells){ rt.cells.forEach((m,i) => { let k = out; if (d.p.effect==='chase') k = (+d.p.intensity)*S.dimmer*modeK()*Math.pow(Math.max(0,Math.sin(t*(+d.p.speed)*4 - i*1.2)),2); m.color.copy(ev.col).multiplyScalar(k*3); }); }
+    if (rt.pix){
+      const c1 = new THREE.Color(d.p.color), c2 = new THREE.Color(d.p.color2), c = new THREE.Color(); const tt = t*(+d.p.speed||1) + (+d.p.phase||0)*6.28;
+      for (let i=0;i<25;i++){ const x = i%5, y = Math.floor(i/5); let v=0, m=0;
+        switch(d.p.pattern){
+          case 'wave': v = 0.5+0.5*Math.sin(x*0.9 + tt*3); m = 0.5+0.5*Math.sin(y*0.9 - tt*2); break;
+          case 'chase': v = (Math.floor(tt*8) % 25) === i ? 1 : 0.06; m = (x+y)/8; break;
+          case 'rings': { const r = Math.hypot(x-2,y-2); v = 0.5+0.5*Math.sin(r*2.2 - tt*5); m = r/2.9; break; }
+          case 'checker': v = ((x+y + Math.floor(tt*2)) % 2) ? 1 : 0.05; m = Math.floor(tt*2)%2; break;
+          case 'sparkle': v = hash(i*7.1 + Math.floor(tt*10)) > 0.8 ? 1 : 0.04; m = hash(i*3.3); break;
+        }
+        c.copy(c1).lerp(c2, m).multiplyScalar(v*out*2.6); rt.pix.setColorAt(i, c); }
+      rt.pix.instanceColor.needsUpdate = true;
+    }
+    if (rt.beam){
+      let L = d.type==='stadium' ? 120 : d.type==='strobe' ? 6 : d.type==='toner' ? 14 : 60;
+      if (dir.y < -0.01) L = Math.min(L, hp.y / -dir.y); if (dir.y >= -0.01 && d.type!=='stadium') L = Math.min(L, 40);
+      const ang = clamp(+d.p.angle, 1, 120)*DEG/2; const r = Math.tan(ang)*L;
+      rt.beam.position.copy(hp).addScaledVector(dir, 0.2); rt.beam.quaternion.copy(tmpQ); rt.beam.scale.set(Math.max(r,0.01), Math.max(L,0.1), Math.max(r,0.01));
+      const wide = d.type==='wash'||d.type==='toner'||d.type==='strobe' ? 0.35 : d.type==='stadium' ? 0.5 : 1;
+      rt.beam.material.uniforms.uColor.value.copy(ev.col); rt.beam.material.uniforms.uAlpha.value = out*beamK*0.55*wide;
+      rt.beam.visible = out > 0.002 && beamK > 0;
+    }
+    if (rt.lasers){
+      const n = rt.lasers.length, sp = +d.p.spread, tt = t*(+d.p.speed||1) + (+d.p.phase||0)*6.28;
+      const lk = S.mode==='show' ? (0.25 + S.haze*0.75) : S.mode==='work' ? 0.08 : 0;
+      rt.laserMat.color.copy(ev.col).multiplyScalar(2.2); rt.laserMat.opacity = out*lk;
+      rt.lasers.forEach((b,i) => {
+        const f = n===1 ? 0 : (i/(n-1) - 0.5); let dp = 0, dtl = 0;
+        switch(d.p.pattern){
+          case 'fan': dp = f*sp; dtl = 4*Math.sin(tt*0.8); break;
+          case 'scan': dp = f*sp*0.35 + Math.sin(tt*1.4)*sp*0.5; dtl = 3*Math.sin(tt*2.1); break;
+          case 'cone': { const a = i/n*6.283 + tt*1.5; dp = Math.cos(a)*sp*0.5; dtl = Math.sin(a)*sp*0.25; break; }
+          case 'wave': dp = f*sp; dtl = 10*Math.sin(tt*2.5 + i*0.7); break;
+        }
+        const bd = dirFrom(ev.pan + dp, ev.tilt + dtl, tmpV2);
+        let L = 80; if (bd.y < -0.01) L = Math.min(L, hp.y / -bd.y);
+        b.position.copy(hp); b.quaternion.setFromUnitVectors(DOWN, bd); b.scale.set(1, L, 1); b.visible = out*lk > 0.003;
+      });
+    }
+    if (TYPE[d.type].real && out > 0.02) cand.push({ d, out, dir, hp, col:ev.col });
+  }
+  cand.sort((a,b) => TYPE[a.d.type].pri - TYPE[b.d.type].pri || a.d.id - b.d.id);
+  for (let i=0;i<POOL;i++){
+    const l = pool[i], c = cand[i];
+    if (!c){ l.intensity = 0; continue; }
+    l.position.copy(c.hp); l.target.position.copy(c.hp).addScaledVector(c.dir, 10); l.target.updateMatrixWorld();
+    l.color.copy(c.col); l.angle = clamp((+c.d.p.angle)*DEG*0.6, 0.03, 1.3); l.penumbra = 0.5;
+    l.intensity = TYPE[c.d.type].base * c.out;
+  }
+  realUsed = Math.min(POOL, cand.length); realWanted = cand.length;
+}
+let realUsed = 0, realWanted = 0;
+
+/* ---------- pyro particles ---------- */
+const PMAX = 7000;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(PMAX*3), pCol = new Float32Array(PMAX*3), pSize = new Float32Array(PMAX), pAlpha = new Float32Array(PMAX);
+const pVel = new Float32Array(PMAX*3), pLife = new Float32Array(PMAX), pMax = new Float32Array(PMAX), pKind = new Uint8Array(PMAX), pBase = new Float32Array(PMAX*3);
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3)); pGeo.setAttribute('aCol', new THREE.BufferAttribute(pCol,3));
+pGeo.setAttribute('aSize', new THREE.BufferAttribute(pSize,1)); pGeo.setAttribute('aAlpha', new THREE.BufferAttribute(pAlpha,1));
+const pMat = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, uniforms:{ uScale:{value:600} },
+  vertexShader:`attribute vec3 aCol; attribute float aSize; attribute float aAlpha; varying vec3 vC; varying float vA; uniform float uScale;
+  void main(){ vC=aCol; vA=aAlpha; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_PointSize = aSize*uScale/max(0.5,-mv.z); gl_Position = projectionMatrix*mv; }`,
+  fragmentShader:`varying vec3 vC; varying float vA; void main(){ float d = length(gl_PointCoord-0.5); float a = smoothstep(0.5,0.0,d)*vA; if(a<0.003) discard; gl_FragColor = vec4(vC*2.0, a); }` });
+const particles = new THREE.Points(pGeo, pMat); particles.frustumCulled = false; particles.raycast = ()=>{}; scene.add(particles);
+let pHead = 0;
+function emit(x,y,z, vx,vy,vz, life, kind, col){
+  const i = pHead; pHead = (pHead+1) % PMAX;
+  pPos[i*3]=x; pPos[i*3+1]=y; pPos[i*3+2]=z; pVel[i*3]=vx; pVel[i*3+1]=vy; pVel[i*3+2]=vz;
+  pLife[i]=0; pMax[i]=life; pKind[i]=kind; pBase[i*3]=col.r; pBase[i*3+1]=col.g; pBase[i*3+2]=col.b;
+}
+const activePyro = [];
+function firePyro(d){ if (!d.rt) return; d.rt.fireT = performance.now()/1000; d.rt.burst = false; }
+function updatePyroDev(d, t){
+  const rt = d.rt, p = d.p, now = performance.now()/1000;
+  if (+p.auto > 0 && now - rt.lastAuto > +p.auto && S.mode!=='blackout'){ rt.lastAuto = now; firePyro(d); }
+  const el = now - rt.fireT; if (el < 0 || el > +p.duration + 0.6) return;
+  const x = d.pos[0], y = d.pos[1] + 0.42, z = d.pos[2], col = new THREE.Color(p.color), H = +p.height;
+  activePyro.push({ d, el });
+  if (el > +p.duration) return;
+  if (p.style==='fountain'){
+    const v0 = Math.sqrt(2*9.8*H);
+    for (let i=0;i<7;i++){ const a = Math.random()*6.283, s = Math.random()*0.09*v0; emit(x,y,z, Math.cos(a)*s, v0*(0.85+Math.random()*0.15), Math.sin(a)*s, 0.9+Math.random()*1.4, 0, col); }
+  } else if (p.style==='flame jet'){
+    const v0 = Math.sqrt(2*6*H);
+    for (let i=0;i<6;i++){ emit(x+(Math.random()-.5)*0.1,y,z+(Math.random()-.5)*0.1, (Math.random()-.5)*0.8, v0*(0.8+Math.random()*0.3), (Math.random()-.5)*0.8, 0.35+Math.random()*0.35, 1, col); }
+  } else {
+    const riseT = 0.5;
+    if (el < riseT) emit(x, y + H*(el/riseT), z, 0, -1, 0, 0.3, 0, col);
+    else if (!rt.burst){ rt.burst = true; for (let i=0;i<420;i++){ const u = Math.random()*2-1, a = Math.random()*6.283, r = Math.sqrt(1-u*u), s = 5+Math.random()*4;
+      emit(x, y+H, z, r*Math.cos(a)*s, u*s, r*Math.sin(a)*s, 1.2+Math.random()*0.8, 2, col); } }
+  }
+}
+function stepParticles(dt){
+  for (let i=0;i<PMAX;i++){
+    if (pLife[i] >= pMax[i]) { pAlpha[i] = 0; continue; }
+    pLife[i] += dt; const k = pLife[i]/pMax[i]; const kind = pKind[i];
+    const g = kind===1 ? -2.5 : 9.8, drag = kind===2 ? 0.985 : 0.995;
+    pVel[i*3]*=drag; pVel[i*3+2]*=drag; pVel[i*3+1] = pVel[i*3+1]*drag - g*dt;
+    pPos[i*3]+=pVel[i*3]*dt; pPos[i*3+1]+=pVel[i*3+1]*dt; pPos[i*3+2]+=pVel[i*3+2]*dt;
+    if (pPos[i*3+1] < 0) { pPos[i*3+1] = 0; pVel[i*3+1] *= -0.25; }
+    const hot = 1-k;
+    if (kind===1){ pCol[i*3]=1; pCol[i*3+1]=0.35+0.55*hot*hot; pCol[i*3+2]=0.08*hot; pSize[i]=0.9*(0.5+k); pAlpha[i]=0.6*hot; }
+    else { pCol[i*3]=pBase[i*3]; pCol[i*3+1]=pBase[i*3+1]*(0.6+0.4*hot); pCol[i*3+2]=pBase[i*3+2]*hot; pSize[i]=kind===2?0.22:0.13; pAlpha[i]=hot*(0.7+0.3*Math.random()); }
+  }
+  pGeo.attributes.position.needsUpdate = pGeo.attributes.aCol.needsUpdate = pGeo.attributes.aSize.needsUpdate = pGeo.attributes.aAlpha.needsUpdate = true;
+  for (let i=0;i<pyroLights.length;i++){ const a = activePyro[i];
+    if (!a) { pyroLights[i].intensity = 0; continue; }
+    const H = +a.d.p.height; pyroLights[i].position.set(a.d.pos[0], a.d.pos[1] + Math.min(H,6)*0.5, a.d.pos[2]);
+    pyroLights[i].color.set(a.d.p.color); pyroLights[i].intensity = (a.el < +a.d.p.duration ? 1 : Math.max(0, 1-(a.el-a.d.p.duration)/0.6)) * 900 * (0.8+0.4*Math.random()); }
+  activePyro.length = 0;
+}
+
+/* ---------- cameras ---------- */
+function updateCameras(t){
+  for (const d of S.devices){
+    if (TYPE[d.type].kind!=='camera' || !d.rt) continue;
+    const rt = d.rt, p = d.p; let pan = +p.pan, tilt = +p.tilt;
+    if (p.motion==='pan sweep') pan += 25*Math.sin(t*0.5);
+    const lens = camLens(d, t, V3());
+    rt.camHead.position.copy(lens); rt.camHead.rotation.set(tilt*DEG, pan*DEG, 0, 'YXZ');
+    const hf = 2*Math.atan(18/(+p.focal));
+    for (const c of [rt.cam, rt.hcam]){ c.position.copy(lens); c.rotation.set(tilt*DEG, pan*DEG, 0, 'YXZ'); c.fov = 2*Math.atan(Math.tan(hf/2)/c.aspect)/DEG; c.updateProjectionMatrix(); c.updateMatrixWorld(); }
+    rt.helper.update();
+    const air = S.onAir===d.id; rt.tally.color.set(air ? 0xff2020 : 0x330000);
+    const hc = air ? 0xff3b3b : (selected && selected.id===d.id ? 0x4cc3ff : 0xf5a524);
+    rt.helper.setColors(new THREE.Color(hc), new THREE.Color(hc), new THREE.Color(hc), new THREE.Color(hc), new THREE.Color(hc));
+    rt.helper.visible = !air;
+    if (rt.post){ const h = lens.y - d.pos[1]; rt.post.scale.y = Math.max(0.05, h); rt.post.position.y = h/2; }
+    if (rt.arm){
+      const piv = V3(d.pos[0], d.pos[1]+1.8, d.pos[2]); const v = lens.clone().sub(piv); const len = v.length(); const back = piv.clone().addScaledVector(v.clone().normalize(), -len*0.3);
+      rt.arm.position.copy(piv).add(back).multiplyScalar(0.5).lerp(lens.clone().add(piv).multiplyScalar(0.5), 0.0);
+      const mid = back.clone().add(lens).multiplyScalar(0.5); rt.arm.position.copy(mid);
+      rt.arm.scale.set(1,1,len*1.3); rt.arm.lookAt(lens); rt.cw.position.copy(back);
+    }
+  }
+}
+const camDevices = () => S.devices.filter(d => TYPE[d.type].kind==='camera');
+
+/* ---------- imported models ---------- */
+const modelGroup = new THREE.Group(); scene.add(modelGroup);
+const UNIT = { m:1, cm:0.01, mm:0.001, in:0.0254, ft:0.3048 };
+const MAIN_EXT = ['glb','gltf','fbx','obj','dae','3ds','stl','ply'];
+const UNSUPPORTED = {
+  skp:'SketchUp files can\'t open in a browser. In SketchUp use File > Export > 3D Model and choose FBX (or OBJ), then import that.',
+  max:'3ds Max files can\'t open in a browser. Use File > Export > Export and pick FBX (binary, 2014 or newer) or glTF.',
+  c4d:'Cinema 4D files can\'t open in a browser. Use File > Export and pick FBX or glTF.',
+  blend:'Blender files can\'t open in a browser. Use File > Export > glTF 2.0 (.glb) or FBX.',
+  '3dm':'Rhino files can\'t open in a browser. Use File > Export Selected and pick FBX or OBJ.',
+  dwg:'DWG drawings can\'t open here. Export the 3D model as FBX or OBJ from your CAD software.',
+  dxf:'DXF drawings can\'t open here. Export the 3D model as FBX or OBJ.',
+  rvt:'Revit files can\'t open in a browser. Use Export > FBX.',
+  usdz:'USDZ isn\'t supported. Export as GLB instead.', ma:'Maya files: export as FBX.', mb:'Maya files: export as FBX.',
+  step:'STEP CAD files: export as OBJ, FBX or STL.', stp:'STEP CAD files: export as OBJ, FBX or STL.', igs:'IGES CAD files: export as OBJ or STL.'
+};
+const ext = n => (n.split('.').pop() || '').toLowerCase();
+const base = n => n.replace(/\\/g,'/').split('/').pop();
+const BLANK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
+
+async function expandFiles(fileList){
+  const out = [];
+  for (const f of fileList){
+    if (ext(f.name)==='zip'){
+      try {
+        const z = unzipSync(new Uint8Array(await f.arrayBuffer()));
+        for (const [path, data] of Object.entries(z)){ if (path.endsWith('/') || path.startsWith('__MACOSX') || base(path).startsWith('._')) continue; out.push(new File([data], base(path))); }
+      } catch(e){ toast(`Couldn't open ${f.name}: the ZIP looks damaged or uses an unsupported compression. Re-zip it, or unzip and use Import a whole folder.`, 'err'); }
+    } else out.push(f);
+  }
+  return out;
+}
+function makeManager(files, missing){
+  const map = new Map(); for (const f of files) map.set(base(f.name).toLowerCase(), f);
+  const urls = new Map();
+  const mgr = new THREE.LoadingManager();
+  mgr.setURLModifier(url => {
+    if (/^(data|blob):/.test(url)) return url;
+    let u; try { u = decodeURIComponent(url); } catch { u = url; }
+    const b = base(u).split('?')[0].toLowerCase();
+    let f = map.get(b);
+    if (!f){ const stem = b.replace(/\.[^.]+$/,''); for (const [k,v] of map) if (k.replace(/\.[^.]+$/,'')===stem && /\.(png|jpe?g|webp|bmp|gif|tga)$/.test(k)) { f = v; break; } }
+    if (!f){ missing.add(base(u)); return BLANK; }
+    if (!urls.has(f)) urls.set(f, URL.createObjectURL(f));
+    return urls.get(f);
+  });
+  mgr.addHandler(/\.tga$/i, new TGALoader(mgr));
+  return mgr;
+}
+async function parseModel(main, files, missing){
+  const e = ext(main.name), mgr = makeManager(files, missing);
+  const find = x => files.find(f => ext(f.name)===x);
+  switch(e){
+    case 'fbx': {
+      const buf = await main.arrayBuffer();
+      const head = new TextDecoder().decode(new Uint8Array(buf.slice(0, 64)));
+      if (!head.startsWith('Kaydara FBX Binary')){ const m = new TextDecoder().decode(new Uint8Array(buf.slice(0, 2000))).match(/FBXVersion:\s*(\d+)/); if (m && +m[1] < 7000) throw new Error(`This FBX is version ${m[1]}, which is too old. Re-export it as binary FBX 2014 or newer.`); }
+      try { return new FBXLoader(mgr).parse(buf, ''); }
+      catch(err){ const s = String(err.message||err); if (/version/i.test(s)) throw new Error('This FBX version is too old. Re-export it as binary FBX 2014 or newer.'); throw new Error('The FBX file couldn\'t be read ('+s+'). Re-export it as binary FBX 2014 or newer.'); }
+    }
+    case 'obj': {
+      const loader = new OBJLoader(mgr); const mtl = find('mtl');
+      if (mtl){ const mats = new MTLLoader(mgr).parse(await mtl.text(), ''); mats.preload(); loader.setMaterials(mats); }
+      else missing.add('(.mtl material file — colours and textures will be grey)');
+      return loader.parse(await main.text());
+    }
+    case 'glb': case 'gltf': {
+      const data = e==='glb' ? await main.arrayBuffer() : await main.text();
+      return await new Promise((res, rej) => new GLTFLoader(mgr).parse(data, '', g => res(g.scene), err => {
+        const s = String(err && err.message || err); rej(new Error(/draco|KHR_draco|meshopt|ktx2|basisu/i.test(s) ? 'This GLB uses Draco/Meshopt/KTX2 compression, which this planner can\'t decode. Export it again without compression.' : 'The glTF file couldn\'t be read: ' + s)); }));
+    }
+    case 'dae': return new ColladaLoader(mgr).parse(await main.text(), '').scene;
+    case '3ds': { const l = new TDSLoader(mgr); l.setResourcePath(''); return l.parse(await main.arrayBuffer(), ''); }
+    case 'stl': { const g = new STLLoader().parse(await main.arrayBuffer()); g.computeVertexNormals(); return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color:0x9aa4b2, roughness:.6, vertexColors: !!g.attributes.color })); }
+    case 'ply': { const g = new PLYLoader().parse(await main.arrayBuffer()); g.computeVertexNormals(); return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color:0x9aa4b2, roughness:.6, vertexColors: !!g.attributes.color })); }
+  }
+  throw new Error('Unsupported file type: ' + e);
+}
+function guessUnits(maxDim){ if (maxDim > 3000) return 'mm'; if (maxDim > 250) return 'cm'; return 'm'; }
+
+async function importFiles(fileList, fromProject=null){
+  if (!fileList || !fileList.length) return;
+  const files = await expandFiles([...fileList]);
+  const mains = files.filter(f => MAIN_EXT.includes(ext(f.name)));
+  if (!mains.length){
+    const bad = files.find(f => UNSUPPORTED[ext(f.name)]);
+    if (bad) toast(UNSUPPORTED[ext(bad.name)], 'err', 16000);
+    else toast(`No 3D model found in what you chose (${files.length} file${files.length===1?'':'s'}). Choose an FBX, OBJ (with its .mtl), GLB, GLTF, DAE, 3DS, STL or PLY file, or a ZIP or folder containing one.`, 'err');
+    return;
+  }
+  const preferred = mains.some(f => ext(f.name)==='glb'||ext(f.name)==='gltf') ? mains.filter(f => !(ext(f.name)==='obj' && mains.some(g=>ext(g.name)==='fbx'))) : mains;
+  for (const main of preferred){
+    toast(`Loading ${main.name} (${(main.size/1048576).toFixed(1)} MB)…`);
+    await new Promise(r => setTimeout(r, 30));
+    const missing = new Set();
+    try {
+      const root = await parseModel(main, files, missing);
+      if (!root) throw new Error('The file loaded but contained nothing.');
+      const kept = files.filter(f => f===main || !MAIN_EXT.includes(ext(f.name)) || (ext(main.name)==='gltf' && ext(f.name)==='bin'));
+      const m = fromProject ? Object.assign(fromProject, { files: kept }) : { id:S.nextId++, name: main.name.replace(/\.[^.]+$/,''), units:'auto', selfLit:true, visible:true, pos:null, rotY:0, files: kept };
+      installModel(m, root);
+      if (!fromProject){ S.models.push(m); select({ kind:'model', id:m.id }); }
+      const sz = m.rt.size;
+      toast(`Imported ${main.name}: ${sz.x.toFixed(1)} × ${sz.z.toFixed(1)} × ${sz.y.toFixed(1)} m (W × D × H), units ${m.rt.unitsUsed}. Check the size in the inspector.`, 'ok', 7000);
+      if (missing.size) toast(`Some textures were not found: ${[...missing].slice(0,6).join(', ')}${missing.size>6?'…':''}. Select the texture files together with the model, or import the whole folder.`, 'err', 14000);
+      if (S.placeholder && !fromProject){ S.placeholder = false; $('#placeholder').checked = false; applyVenue(); }
+      markDirty();
+    } catch(err){
+      console.error(err);
+      toast(`Couldn't import ${main.name}. ${err.message || err}`, 'err', 16000);
+    }
+  }
+}
+function installModel(m, root){
+  const strip = []; root.traverse(o => { if (o.isLight || o.isCamera) strip.push(o); }); strip.forEach(o => o.parent && o.parent.remove(o));
+  const inner = new THREE.Group(); inner.add(root);
+  const g = new THREE.Group(); g.add(inner); g.userData.modelId = m.id;
+  root.updateMatrixWorld(true);
+  const raw = new THREE.Box3().setFromObject(root); const rs = raw.getSize(V3());
+  const auto = guessUnits(Math.max(rs.x, rs.y, rs.z));
+  const mats = new Set();
+  root.traverse(o => { if (o.isMesh){ o.userData.modelId = m.id; if (!o.material) o.material = new THREE.MeshStandardMaterial({ color:0x9aa4b2 });
+    (Array.isArray(o.material)?o.material:[o.material]).forEach(mt => { mats.add(mt); if (mt.map) mt.map.colorSpace = THREE.SRGBColorSpace; }); } });
+  m.rt = { g, inner, root, raw, auto, mats:[...mats] };
+  modelGroup.add(g); placeTargets.push(g);
+  applyModelUnits(m, !m.pos);
+}
+function applyModelUnits(m, place){
+  const rt = m.rt, u = m.units==='auto' ? rt.auto : m.units, s = UNIT[u];
+  rt.unitsUsed = m.units==='auto' ? `${u} (auto)` : u;
+  rt.inner.scale.setScalar(s); rt.inner.position.set(0,0,0); rt.inner.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(rt.inner); const c = b.getCenter(V3());
+  rt.inner.position.set(-c.x, -b.min.y, -c.z);
+  rt.size = b.getSize(V3());
+  if (place){ m.pos = [0, 0, -HD + 1 + rt.size.z/2]; }
+  rt.g.position.fromArray(m.pos); rt.g.rotation.y = (m.rotY||0)*DEG; rt.g.visible = m.visible !== false;
+  applySelfLit(m);
+}
+function applySelfLit(m){
+  const k = (m.selfLit && S.mode==='show') ? 0.9 : (m.selfLit && S.mode==='work' ? 0.25 : 0);
+  for (const mt of m.rt.mats){ if (!('emissive' in mt)) continue;
+    if (mt.map){ mt.emissiveMap = k ? mt.map : null; mt.emissive.setRGB(k,k,k); }
+    else if (mt.userData.origEm === undefined){ mt.userData.origEm = mt.emissive.getHex(); }
+    mt.needsUpdate = true; }
+}
+function removeModel(m){ modelGroup.remove(m.rt.g); const i = placeTargets.indexOf(m.rt.g); if (i>=0) placeTargets.splice(i,1); S.models = S.models.filter(x => x!==m); if (selected && selected.id===m.id) select(null); markDirty(); }
+const getModel = id => S.models.find(m => m.id===id);
+
+/* ---------- drag & drop (files and folders) ---------- */
+const view = $('#view');
+async function readEntry(entry, out){
+  if (entry.isFile) await new Promise(r => entry.file(f => { out.push(f); r(); }, r));
+  else if (entry.isDirectory){ const rd = entry.createReader(); let batch;
+    do { batch = await new Promise(r => rd.readEntries(r, () => r([]))); for (const e of batch) await readEntry(e, out); } while (batch.length); }
+}
+let dragDepth = 0;
+view.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('#drop').hidden = false; });
+view.addEventListener('dragover', e => { e.preventDefault(); });
+view.addEventListener('dragleave', () => { if (--dragDepth <= 0){ dragDepth = 0; $('#drop').hidden = true; } });
+view.addEventListener('drop', async e => {
+  e.preventDefault(); dragDepth = 0; $('#drop').hidden = true;
+  const items = [...(e.dataTransfer.items||[])]; const out = [];
+  const entries = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (entries.length) { for (const en of entries) await readEntry(en, out); } else out.push(...e.dataTransfer.files);
+  const proj = out.find(f => ext(f.name)==='json'); if (proj && out.length===1) return openProject(proj);
+  importFiles(out);
+});
+
+/* ---------- picking & placement ---------- */
+const ray = new THREE.Raycaster(); ray.layers.enableAll();
+const mouse = new THREE.Vector2();
+function activeCam(){ if (S.onAir){ const d = getDev(S.onAir); if (d && d.rt) return d.rt.cam; } return planMode ? ortho : camera; }
+function setRay(e){ const r = canvas.getBoundingClientRect(); mouse.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1); ray.setFromCamera(mouse, activeCam()); }
+let downAt = null;
+canvas.addEventListener('pointerdown', e => { downAt = { x:e.clientX, y:e.clientY }; });
+canvas.addEventListener('pointerup', e => {
+  if (!downAt || Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y) > 5 || e.button!==0) return;
+  if (tc.dragging) return;
+  setRay(e);
+  if (seatMode) return pickSeat();
+  if (placing) return placeAt(e.shiftKey);
+  const hits = ray.intersectObjects([devGroup, ...S.devices.filter(d=>d.rt&&d.rt.camHead).map(d=>d.rt.camHead), ...S.devices.filter(d=>d.rt&&d.rt.arm).map(d=>d.rt.arm), modelGroup], true);
+  for (const h of hits){
+    if (h.object.userData.devId) return select({ kind:'dev', id:h.object.userData.devId });
+    if (h.object.userData.modelId) return select({ kind:'model', id:h.object.userData.modelId });
+  }
+  select(null);
+});
+function placeAt(keep){
+  const T = TYPE[placing];
+  const trussPicks = S.devices.filter(d => d.type==='truss' && d.rt).map(d => d.rt.pick);
+  const hits = ray.intersectObjects([...trussPicks, ...placeTargets], true).filter(h => h.object.visible || h.object.userData.truss);
+  const h = hits[0]; if (!h) return toast('Click on the floor, stage, stands or a truss.');
+  let pos = h.point.clone(), extra = {};
+  const trussId = h.object.userData.truss;
+  if (T.kind==='light' && trussId && placing!=='pyro'){
+    const tr = getDev(trussId); const local = tr.rt.g.worldToLocal(h.point.clone()); local.y = -0.45; local.z = 0;
+    pos = tr.rt.g.localToWorld(local); extra.mount = 'hung';
+  } else if (trussId){ pos.y = 0; }
+  if (placing==='truss'){ pos.y = Math.max(pos.y, 0) + 10; }
+  const d = addDevice(placing, pos, extra);
+  if (T.kind==='light'){
+    if (placing==='stadium') aimLight(d, STAGE_C);
+    else if (placing==='toner') aimLight(d, V3(pos.x*0.5, 6, HD + 8));
+    else if (placing==='matrix' || placing==='laser'){ d.p.pan = 180; d.p.tilt = extra.mount==='hung' ? 80 : 90; if (pos.z > SF) d.p.pan = 0; }
+    else if (extra.mount!=='hung'){ d.p.tilt = 150; d.p.pan = pos.z > SF ? 0 : 180; }
+    else if (pos.z > SF) aimLight(d, V3(pos.x*0.6, DECK_H, -HD+9));
+  }
+  if (T.kind==='camera') aimCam(d, V3(0, DECK_H+1.5, -HD+9));
+  markDirty(); refreshCamBar();
+  if (!keep){ setPlacing(null); select({ kind:'dev', id:d.id }); } else toast(`${d.name} placed. Keep clicking to add more.`);
+}
+function setPlacing(type){
+  placing = type; if (type) exitSeat(false);
+  document.querySelectorAll('.pal button').forEach(b => b.classList.toggle('on', b.dataset.type===type));
+  const h = $('#hint');
+  if (type){ h.hidden = false; h.textContent = `Click to place a ${TYPE[type].label}${TYPE[type].kind==='light'&&type!=='pyro'?' (click a truss to hang it)':''}. Shift-click to place several. Esc to cancel.`; }
+  else h.hidden = true;
+}
+
+/* ---------- selection & gizmo ---------- */
+function select(sel){
+  selected = sel; tc.detach();
+  if (sel && sel.kind==='dev'){ const d = getDev(sel.id); if (d && d.rt) { tc.attach(d.rt.g); tc.setMode('translate'); } }
+  if (sel && sel.kind==='model'){ const m = getModel(sel.id); if (m && m.rt) { tc.attach(m.rt.g); } }
+  renderInspector(); renderCues();
+}
+function onGizmoMove(){
+  const o = tc.object; if (!o || !selected) return;
+  if (selected.kind==='dev'){ const d = getDev(selected.id); d.pos = [o.position.x, o.position.y, o.position.z];
+    if (d.type==='truss') { d.p.rotY = Math.round(o.rotation.y/DEG); }
+    else if (TYPE[d.type].kind==='camera' && tc.mode==='rotate'){ d.p.pan = +(d.p.pan + o.rotation.y/DEG).toFixed(1); o.rotation.set(0,0,0); }
+    else o.rotation.set(0,0,0);
+  } else if (selected.kind==='model'){ const m = getModel(selected.id); m.pos = [o.position.x, o.position.y, o.position.z]; m.rotY = Math.round(o.rotation.y/DEG); o.rotation.x = o.rotation.z = 0; }
+  throttledRefresh();
+}
+let refreshT = 0; function throttledRefresh(){ const n = performance.now(); if (n - refreshT > 120){ refreshT = n; refreshInspectorValues(); } }
+
+/* ---------- inspector ---------- */
+const insp = $('#insp');
+function el(tag, attrs={}, ...kids){ const e = document.createElement(tag); for (const [k,v] of Object.entries(attrs)){ if (k==='on') for (const [ev,fn] of Object.entries(v)) e.addEventListener(ev, fn); else if (k==='class') e.className = v; else if (k in e && k!=='list') e[k] = v; else e.setAttribute(k, v); } for (const k of kids) if (k!=null) e.append(k); return e; }
+function fieldRow(f, obj, onChange, idp){
+  const id = `${idp}_${f.k}`; const v = obj[f.k]; let input, out = null;
+  if (f.t==='range'){ out = el('span', { class:'v' }, fmt(v, f.step)); input = el('input', { type:'range', id, min:f.min, max:f.max, step:f.step, value:v, on:{ input:e => { const nv = +e.target.value; out.textContent = fmt(nv, f.step); onChange(f.k, nv); } } }); }
+  else if (f.t==='select'){ input = el('select', { id, on:{ change:e => onChange(f.k, isNaN(+e.target.value) ? e.target.value : +e.target.value) } }); for (const o of f.o) input.append(el('option', { value:o, selected: String(o)===String(v) }, String(o))); }
+  else if (f.t==='color'){ input = el('input', { type:'color', id, value:v, on:{ input:e => onChange(f.k, e.target.value) } }); }
+  else if (f.t==='bool'){ input = el('input', { type:'checkbox', id, checked:v!==false, on:{ change:e => onChange(f.k, e.target.checked) } }); }
+  else { input = el('input', { type:'text', id, value:v, on:{ input:e => onChange(f.k, e.target.value) } }); }
+  input.dataset.key = f.k;
+  return el('div', { class:'row' }, el('label', { for:id }, f.l), input, out);
+}
+const fmt = (v, step) => (step && step < 1) ? (+v).toFixed(step < 0.1 ? 2 : 1) : String(v);
+function xyzRow(arr, onChange, idp){
+  const wrap = el('div', { class:'xyz' });
+  ['X','Y','Z'].forEach((a,i) => wrap.append(el('input', { type:'number', id:`${idp}_${a}`, step:0.1, value:(+arr[i]).toFixed(2), title:a+' (m)', 'aria-label':a+' metres', on:{ change:e => onChange(i, +e.target.value) } })));
+  return el('div', { class:'row' }, el('label', {}, 'Position m'), wrap);
+}
+function renderInspector(){
+  insp.innerHTML = '';
+  if (!selected) return renderRigList();
+  if (selected.kind==='dev') return renderDevInspector(getDev(selected.id));
+  if (selected.kind==='model') return renderModelInspector(getModel(selected.id));
+  if (selected.kind==='cue') return renderCueInspector(S.cues.find(c => c.id===selected.id));
+}
+function renderRigList(){
+  insp.append(el('h3', {}, 'Rig'));
+  if (!S.devices.length && !S.models.length){ insp.append(el('p', { class:'note' }, 'Nothing placed yet. Pick a light or camera on the left, or import your stage model.')); return; }
+  const groups = {}; for (const d of S.devices) (groups[d.type] ||= []).push(d);
+  if (S.models.length){ const box = el('div', { class:'devlist' }); insp.append(el('h3', {}, `3D models · ${S.models.length}`), box);
+    S.models.forEach(m => box.append(el('button', { on:{ click:() => select({ kind:'model', id:m.id }) } }, m.name, el('small', {}, m.rt ? `${m.rt.size.x.toFixed(0)}×${m.rt.size.z.toFixed(0)} m` : 'not loaded')))); }
+  for (const [type, list] of Object.entries(groups)){
+    const box = el('div', { class:'devlist' });
+    insp.append(el('h3', {}, `${TYPE[type].label} · ${list.length}`), box);
+    list.forEach(d => box.append(el('button', { on:{ click:() => select({ kind:'dev', id:d.id }) } }, d.name, el('small', {}, d.mount==='hung'?'hung':''))));
+  }
+  insp.append(el('p', { class:'note', style:'margin-top:12px' }, 'Keys: 1–9 take a camera, 0 free view, V seat view, G next cue, T move, R rotate, Del delete, Ctrl+D duplicate, W A S D Q E fly.'));
+}
+function renderDevInspector(d){
+  if (!d) return renderRigList();
+  const T = TYPE[d.type];
+  insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, T.label), d.mount==='hung' ? el('span', { class:'note' }, 'hung on truss') : null));
+  insp.append(el('div', { class:'row' }, el('label', { for:'dv_name' }, 'Name'), el('input', { type:'text', id:'dv_name', value:d.name, on:{ input:e => { d.name = e.target.value; refreshCamBar(); markDirty(); } } })));
+  insp.append(xyzRow(d.pos, (i, v) => { d.pos[i] = v; d.rt.g.position.fromArray(d.pos); markDirty(); }, 'dv_pos'));
+  if (d.type==='truss') insp.append(el('p', { class:'note' }, `Trim height ${d.pos[1].toFixed(2)} m (${(d.pos[1]/FT).toFixed(1)} ft). Use Y to raise or lower.`));
+  for (const f of schema(d.type)) insp.append(fieldRow(f, d.p, (k, v) => {
+    d.p[k] = v; if (STRUCT.has(k)) rebuild(d);
+    if (k==='rotY' && d.rt) d.rt.g.rotation.y = v*DEG;
+    markDirty();
+  }, 'dv'));
+  const b = el('div', { class:'btns' });
+  b.append(el('button', { on:{ click:() => tc.setMode('translate') } }, 'Move (T)'));
+  if (d.type==='truss' || T.kind==='camera') b.append(el('button', { on:{ click:() => tc.setMode('rotate') } }, 'Rotate (R)'));
+  b.append(el('button', { on:{ click:duplicateSel } }, 'Duplicate'));
+  b.append(el('button', { class:'danger', on:{ click:deleteSel } }, 'Delete'));
+  insp.append(b);
+  if (T.kind==='light' && d.type!=='pyro'){
+    const b2 = el('div', { class:'btns' });
+    b2.append(el('button', { on:{ click:() => { aimLight(d, STAGE_C); renderInspector(); markDirty(); } } }, 'Aim at stage'));
+    b2.append(el('button', { on:{ click:() => { aimLight(d, V3(d.pos[0]*0.5, 6, HD+8)); renderInspector(); markDirty(); } } }, 'Aim at audience'));
+    b2.append(el('button', { on:{ click:() => copyLook(d) } }, 'Copy look to all'));
+    b2.append(el('button', { on:{ click:() => spreadPhases(d) } }, 'Spread phases'));
+    insp.append(b2);
+    insp.append(el('p', { class:'note' }, 'Tilt 0° points straight down, 90° level, 180° straight up. Pan 0° faces the stage, 180° faces the south stand.'));
+  }
+  if (d.type==='pyro') insp.append(el('div', { class:'btns' }, el('button', { class:'primary', on:{ click:() => firePyro(d) } }, 'Fire now'), el('button', { on:{ click:() => S.devices.filter(x=>x.type==='pyro').forEach(firePyro) } }, 'Fire all pyro')));
+  if (T.kind==='camera'){
+    const n = camDevices().indexOf(d) + 1;
+    insp.append(el('div', { class:'btns' },
+      el('button', { class: S.onAir===d.id ? 'on' : 'primary', on:{ click:() => setOnAir(S.onAir===d.id ? null : d.id) } }, S.onAir===d.id ? 'Back to free view (0)' : `Take on air (${n})`),
+      el('button', { on:{ click:() => { aimCam(d, V3(0, DECK_H+1.5, -HD+9)); renderInspector(); markDirty(); } } }, 'Aim at stage')));
+    const lens = camLens(d); insp.append(el('div', { class:'dims' }, `Lens ${lens.y.toFixed(2)} m above floor · ${(+d.p.focal)} mm · ${(2*Math.atan(18/(+d.p.focal))/DEG).toFixed(1)}° horizontal FOV`));
+    insp.append(el('p', { class:'note' }, 'Focal length is full-frame equivalent. The orange outline in the 3D view shows what this camera sees.'));
+  }
+}
+function renderModelInspector(m){
+  if (!m || !m.rt) return renderRigList();
+  const s = m.rt.size;
+  insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, '3D model')));
+  insp.append(el('div', { class:'row' }, el('label', { for:'md_name' }, 'Name'), el('input', { type:'text', id:'md_name', value:m.name, on:{ input:e => { m.name = e.target.value; markDirty(); } } })));
+  insp.append(el('div', { class:'dims', id:'md_dims' },
+    `W ${s.x.toFixed(2)} m · ${(s.x/FT).toFixed(1)} ft`, el('br'), `D ${s.z.toFixed(2)} m · ${(s.z/FT).toFixed(1)} ft`, el('br'), `H ${s.y.toFixed(2)} m · ${(s.y/FT).toFixed(1)} ft`, el('br'),
+    el('span', { style:'color:var(--muted)' }, `Units: ${m.rt.unitsUsed}`)));
+  const us = el('select', { id:'md_units', on:{ change:e => { m.units = e.target.value; applyModelUnits(m, false); renderInspector(); markDirty(); } } });
+  [['auto','Auto-detect'],['m','Metres'],['cm','Centimetres'],['mm','Millimetres'],['in','Inches'],['ft','Feet']].forEach(([v,l]) => us.append(el('option', { value:v, selected:m.units===v }, l)));
+  insp.append(el('div', { class:'row' }, el('label', { for:'md_units' }, 'Model units'), us));
+  insp.append(el('p', { class:'note' }, 'If the size looks wrong (a 30 m stage showing as 3000 m), change the units here.'));
+  insp.append(xyzRow(m.pos, (i, v) => { m.pos[i] = v; m.rt.g.position.fromArray(m.pos); markDirty(); }, 'md_pos'));
+  insp.append(fieldRow({ k:'rotY', l:'Rotation °', t:'range', min:-180, max:180, step:1 }, m, (k, v) => { m.rotY = v; m.rt.g.rotation.y = v*DEG; markDirty(); }, 'md'));
+  insp.append(fieldRow({ k:'selfLit', l:'Self-lit textures', t:'bool' }, m, (k, v) => { m.selfLit = v; applySelfLit(m); markDirty(); }, 'md'));
+  insp.append(fieldRow({ k:'visible', l:'Visible', t:'bool' }, m, (k, v) => { m.visible = v; m.rt.g.visible = v; markDirty(); }, 'md'));
+  insp.append(el('p', { class:'note' }, 'Self-lit makes textured surfaces glow in Show mode, so LED screens and signs in your model read as lit.'));
+  insp.append(el('div', { class:'btns' },
+    el('button', { on:{ click:() => tc.setMode('translate') } }, 'Move (T)'),
+    el('button', { on:{ click:() => tc.setMode('rotate') } }, 'Rotate (R)'),
+    el('button', { on:{ click:() => { m.rotY = ((m.rotY + 90 + 180) % 360) - 180; m.rt.g.rotation.y = m.rotY*DEG; renderInspector(); markDirty(); } } }, 'Rotate 90°'),
+    el('button', { on:{ click:() => { m.pos[1] = 0; m.rt.g.position.y = 0; renderInspector(); markDirty(); } } }, 'Drop to floor'),
+    el('button', { on:{ click:() => { const b = new THREE.Box3().setFromObject(m.rt.g); m.pos[2] += (-HD + 1) - b.min.z; m.pos[0] = 0; m.rt.g.position.fromArray(m.pos); renderInspector(); markDirty(); } } }, 'Move to stage end'),
+    el('button', { class:'danger', on:{ click:() => removeModel(m) } }, 'Delete')));
+}
+function refreshInspectorValues(){
+  if (!selected) return;
+  const arr = selected.kind==='dev' ? getDev(selected.id)?.pos : selected.kind==='model' ? getModel(selected.id)?.pos : null;
+  const p = selected.kind==='dev' ? 'dv_pos' : 'md_pos';
+  if (arr) ['X','Y','Z'].forEach((a,i) => { const e = document.getElementById(`${p}_${a}`); if (e && document.activeElement!==e) e.value = (+arr[i]).toFixed(2); });
+  if (selected.kind==='dev'){ const d = getDev(selected.id); if (!d) return;
+    for (const k of ['pan','rotY']){ const e = document.getElementById('dv_'+k); if (e && document.activeElement!==e){ e.value = d.p[k]; const v = e.parentElement.querySelector('.v'); if (v) v.textContent = d.p[k]; } } }
+  if (selected.kind==='model'){ const m = getModel(selected.id); const e = document.getElementById('md_rotY'); if (e){ e.value = m.rotY; e.parentElement.querySelector('.v').textContent = m.rotY; } }
+}
+function copyLook(src){
+  const keys = ['on','intensity','color','color2','effect','pattern','angle','speed','rate','spread'];
+  let n = 0; for (const d of S.devices) if (d!==src && d.type===src.type){ for (const k of keys) if (k in src.p) d.p[k] = src.p[k]; n++; }
+  toast(`Copied the look to ${n} other ${TYPE[src.type].label}${n===1?'':'s'}.`, 'ok'); markDirty();
+}
+function spreadPhases(src){
+  const list = S.devices.filter(d => d.type===src.type).sort((a,b) => a.pos[0]-b.pos[0]);
+  list.forEach((d,i) => d.p.phase = +(i/list.length).toFixed(2)); toast(`Spread phases across ${list.length} lights, left to right.`, 'ok'); renderInspector(); markDirty();
+}
+function deleteSel(){
+  if (!selected) return;
+  if (selected.kind==='model') return removeModel(getModel(selected.id));
+  if (selected.kind==='cue'){ S.cues = S.cues.filter(c => c.id!==selected.id); select(null); renderCues(); markDirty(); return; }
+  const d = getDev(selected.id); if (!d) return;
+  tc.detach(); disposeDevice(d); S.devices = S.devices.filter(x => x!==d);
+  if (S.onAir===d.id) setOnAir(null);
+  select(null); refreshCamBar(); markDirty();
+}
+function duplicateSel(){
+  if (!selected || selected.kind!=='dev') return; const d = getDev(selected.id);
+  const off = d.type==='truss' ? V3(0,0,3) : V3(1.5,0,0);
+  const n = addDevice(d.type, V3(...d.pos).add(off), { mount:d.mount, p:JSON.parse(JSON.stringify(d.p)) });
+  select({ kind:'dev', id:n.id }); refreshCamBar(); markDirty();
+}
+
+/* ---------- camera bus ---------- */
+function refreshCamBar(){
+  const bar = $('#cambar'); bar.innerHTML = '';
+  bar.append(el('span', { class:'lbl' }, 'Cameras'));
+  bar.append(el('button', { class: S.onAir ? '' : 'on', on:{ click:() => setOnAir(null) } }, el('span', { class:'kbd' }, '0'), 'Free view'));
+  camDevices().forEach((d,i) => bar.append(el('button', { class: S.onAir===d.id ? 'air' : '', title:'Take on air', on:{ click:() => setOnAir(S.onAir===d.id?null:d.id) } }, el('span', { class:'kbd' }, i<9?String(i+1):'·'), d.name)));
+  bar.append(el('span', { class:'sp' }));
+  bar.append(el('button', { id:'bSeat', class: seatMode ? 'on' : '', on:{ click:() => seatMode ? exitSeat(true) : enterSeat() } }, el('span', { class:'kbd' }, 'V'), 'Seat view'));
+  bar.append(el('button', { id:'bPlan', class: planMode ? 'on' : '', on:{ click:() => setPlan(!planMode) } }, '2D plan'));
+  bar.append(el('button', { id:'bCueToggle', on:{ click:() => { const c = $('#cuebar'); c.hidden = !c.hidden; resize(); } } }, 'Cues'));
+}
+function setOnAir(id){
+  S.onAir = id; exitSeat(false);
+  if (id && planMode) setPlan(false);
+  controls.enabled = !id; tc.enabled = !id; if (id) tc.detach();
+  $('#onair').hidden = !id; if (id) $('#onair').textContent = 'ON AIR · ' + getDev(id).name;
+  refreshCamBar(); if (selected && selected.kind==='dev') renderInspector();
+}
+
+/* ---------- views ---------- */
+const VIEWS = [
+  ['Overview', [62,52,78], [0,2,-12]], ['FOH', [0,3.6,17.5], [0,4,-40]], ['Stage', [0,3.4,-33], [0,4,20]],
+  ['Player desk', [-6,2.9,-36.5], [6,2.2,-30]], ['Upper stand', [0,15,66], [0,3,-36]], ['Side stand', [-56,12,-2], [0,3,-36]],
+  ['Rig', [18,9,-14], [0,10,-36]], ['Under truss', [0,1.8,-20], [0,12,-30]]
+];
+let fly = null;
+function flyTo(pos, tgt, dur=1.1){ fly = { p0:camera.position.clone(), t0:controls.target.clone(), p1:V3(...pos), t1:V3(...tgt), s:performance.now(), dur:dur*1000 }; }
+function setPlan(on){
+  planMode = on; if (on){ setOnAir(null); exitSeat(false); }
+  controls.enabled = !on; oControls.enabled = on; tc.camera = on ? ortho : camera;
+  resize(); refreshCamBar();
+}
+
+/* ---------- seat view ---------- */
+function enterSeat(){
+  if (S.onAir) setOnAir(null); if (planMode) setPlan(false); setPlacing(null);
+  seatMode = true; refreshCamBar();
+  $('#hint').hidden = false; $('#hint').textContent = 'Click any seat to sit there. Esc returns to where you were.';
+}
+function pickSeat(){
+  const h = ray.intersectObject(seatMesh)[0];
+  if (!h){ return toast('Click a seat in one of the stands. Work light mode makes seats easier to see.'); }
+  const m = new THREE.Matrix4(); seatMesh.getMatrixAt(h.instanceId, m); const p = V3().setFromMatrixPosition(m);
+  const [si, row, no] = seatInfo[h.instanceId]; const st = STANDS[si];
+  if (!seatReturn) seatReturn = { p:camera.position.clone(), t:controls.target.clone() };
+  const eye = p.clone().add(V3(0, 1.2, 0)).addScaledVector(st.o, -0.05);
+  const look = V3(0, 4, -HD + 9);
+  const front = V3(clamp(p.x, -18, 18), DECK_H, SF);
+  const dist = p.distanceTo(V3(front.x, p.y, front.z));
+  flyTo(eye.toArray(), eye.clone().add(look.clone().sub(eye).normalize().multiplyScalar(0.5)).toArray(), 1.0);
+  controls.enableZoom = false; controls.enablePan = false;
+  $('#hint').hidden = true;
+  const sp = $('#seatPanel'); sp.hidden = false; sp.innerHTML = '';
+  sp.append(el('b', {}, `${st.name} · Row ${row} · Seat ${no}`), el('br'),
+    el('span', { class:'mono' }, `${dist.toFixed(1)} m (${(dist/FT).toFixed(0)} ft) to the stage front · eye height ${eye.y.toFixed(1)} m`), el('br'),
+    el('span', { class:'note' }, 'Drag to look around. Click another seat to move. Esc to leave.'));
+}
+function exitSeat(back){
+  if (!seatMode) return; seatMode = false; controls.enableZoom = true; controls.enablePan = true;
+  $('#seatPanel').hidden = true; if (!placing) $('#hint').hidden = true;
+  if (back && seatReturn) flyTo(seatReturn.p.toArray(), seatReturn.t.toArray(), 1.0);
+  seatReturn = null; refreshCamBar();
+}
+
+/* ---------- cues ---------- */
+const LOOK_NUM = ['intensity','angle','pan','tilt','speed','phase','rate','spread'];
+const LOOK_DISC = ['effect','pattern'];
+function captureLook(){
+  const lights = {};
+  for (const d of S.devices) if (TYPE[d.type].kind==='light' && d.type!=='pyro'){
+    const o = {}; for (const k of [...LOOK_NUM, ...LOOK_DISC, 'on', 'color', 'color2']) if (k in d.p) o[k] = d.p[k]; lights[d.id] = o; }
+  return { mode:S.mode, dimmer:S.dimmer, haze:S.haze, lights };
+}
+let fade = null;
+function applyLook(look, dur){
+  const from = captureLook();
+  for (const [id, L] of Object.entries(look.lights)){ const d = getDev(+id); if (!d) continue; for (const k of LOOK_DISC) if (k in L) d.p[k] = L[k]; }
+  if (look.mode !== S.mode) setMode(look.mode);
+  if (!dur){ finishLook(look); return; }
+  fade = { from, to:look, s:performance.now(), dur:dur*1000 };
+}
+function finishLook(look){
+  for (const [id, L] of Object.entries(look.lights)){ const d = getDev(+id); if (!d) continue; Object.assign(d.p, L); }
+  S.dimmer = look.dimmer; S.haze = look.haze; syncTopUI(); fade = null;
+  if (selected && selected.kind==='dev') renderInspector();
+}
+function stepFade(){
+  if (!fade) return; const k = clamp((performance.now() - fade.s)/fade.dur, 0, 1); const e = k*k*(3-2*k);
+  for (const [id, L] of Object.entries(fade.to.lights)){ const d = getDev(+id), F = fade.from.lights[id]; if (!d || !F) continue;
+    const fi = F.on===false ? 0 : F.intensity, ti = L.on===false ? 0 : L.intensity;
+    d.p.on = true; d.p.intensity = lerp(fi, ti, e);
+    for (const k2 of LOOK_NUM) if (k2!=='intensity' && k2 in L && k2 in F) d.p[k2] = lerp(+F[k2], +L[k2], e);
+    for (const ck of ['color','color2']) if (L[ck] && F[ck]) d.p[ck] = '#' + new THREE.Color(F[ck]).lerp(new THREE.Color(L[ck]), e).getHexString();
+  }
+  S.dimmer = lerp(fade.from.dimmer, fade.to.dimmer, e); S.haze = lerp(fade.from.haze, fade.to.haze, e);
+  if (k >= 1) finishLook(fade.to);
+}
+const PB = { playing:false, idx:-1, start:0 };
+function goCue(i, fromPlay=true){
+  if (!S.cues.length) return;
+  i = ((i % S.cues.length) + S.cues.length) % S.cues.length;
+  const c = S.cues[i]; PB.idx = i; PB.start = performance.now();
+  applyLook(c.look, +c.fade);
+  if (c.cam && $('#cCams').checked && getDev(c.cam)) setOnAir(c.cam);
+  if (c.pyro) S.devices.filter(d => d.type==='pyro').forEach(firePyro);
+  renderCues();
+}
+function stepPlayback(){
+  if (!PB.playing || PB.idx < 0) return;
+  const c = S.cues[PB.idx]; if (!c) return;
+  const el2 = (performance.now() - PB.start)/1000, tot = (+c.fade) + (+c.hold);
+  const bar = document.querySelector(`.cue[data-id="${c.id}"] .bar`); if (bar) bar.style.width = Math.min(100, el2/tot*100) + '%';
+  if (el2 >= tot){
+    if (PB.idx === S.cues.length-1 && !$('#cLoop').checked){ stopShow(); return; }
+    goCue(PB.idx + 1);
+  }
+}
+function playShow(){ if (!S.cues.length) return toast('Record a cue first: set up the lights, then press Record cue.'); PB.playing = true; goCue(PB.idx < 0 ? 0 : PB.idx); $('#bPlay').textContent = 'Stop show'; }
+function stopShow(){ PB.playing = false; $('#bPlay').textContent = 'Play show'; document.querySelectorAll('.cue .bar').forEach(b => b.style.width = 0); }
+function recordCue(){
+  const c = { id:S.nextId++, name:`Cue ${S.cues.length+1}`, hold:6, fade:1.5, cam:S.onAir, pyro:false, look:captureLook() };
+  S.cues.push(c); select({ kind:'cue', id:c.id }); markDirty(); toast(`Recorded ${c.name}. Rename it and set its timing in the inspector.`, 'ok');
+}
+function renderCues(){
+  const box = $('#cues'); box.innerHTML = '';
+  if (!S.cues.length) box.append(el('p', { class:'note', style:'align-self:center' }, 'No cues yet. Set up a look and press Record cue.'));
+  S.cues.forEach((c,i) => {
+    const cam = c.cam && getDev(c.cam);
+    box.append(el('button', { class:'cue' + (PB.idx===i ? ' live' : '') + (selected && selected.kind==='cue' && selected.id===c.id ? ' sel' : ''), 'data-id':c.id,
+      on:{ click:() => { select({ kind:'cue', id:c.id }); goCue(i); } } },
+      el('div', { class:'n' }, `Q${i+1} · ${(+c.fade).toFixed(1)}s fade · ${(+c.hold).toFixed(0)}s`),
+      el('div', { class:'t' }, c.name),
+      el('div', { class:'m' }, (cam ? '● ' + cam.name : 'no camera change') + (c.pyro ? ' · pyro' : '')),
+      el('div', { class:'bar' })));
+  });
+}
+function renderCueInspector(c){
+  if (!c) return renderRigList(); const i = S.cues.indexOf(c);
+  insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, `Cue ${i+1}`)));
+  insp.append(el('div', { class:'row' }, el('label', { for:'cq_name' }, 'Name'), el('input', { type:'text', id:'cq_name', value:c.name, on:{ input:e => { c.name = e.target.value; renderCuesLight(); markDirty(); } } })));
+  insp.append(fieldRow({ k:'hold', l:'Hold s', t:'range', min:0.5, max:60, step:0.5 }, c, (k,v) => { c.hold = v; renderCuesLight(); markDirty(); }, 'cq'));
+  insp.append(fieldRow({ k:'fade', l:'Fade in s', t:'range', min:0, max:10, step:0.1 }, c, (k,v) => { c.fade = v; renderCuesLight(); markDirty(); }, 'cq'));
+  const cs = el('select', { id:'cq_cam', on:{ change:e => { c.cam = e.target.value ? +e.target.value : null; renderCuesLight(); markDirty(); } } });
+  cs.append(el('option', { value:'' }, 'No change'));
+  camDevices().forEach(d => cs.append(el('option', { value:d.id, selected:c.cam===d.id }, d.name)));
+  insp.append(el('div', { class:'row' }, el('label', { for:'cq_cam' }, 'Camera'), cs));
+  insp.append(fieldRow({ k:'pyro', l:'Fire all pyro', t:'bool' }, c, (k,v) => { c.pyro = v; renderCuesLight(); markDirty(); }, 'cq'));
+  insp.append(el('div', { class:'btns' },
+    el('button', { class:'primary', on:{ click:() => { c.look = captureLook(); c.cam = S.onAir || c.cam; toast(`Updated ${c.name} with the current look.`, 'ok'); renderInspector(); markDirty(); } } }, 'Update look'),
+    el('button', { on:{ click:() => moveCue(c,-1) } }, 'Move left'), el('button', { on:{ click:() => moveCue(c,1) } }, 'Move right'),
+    el('button', { class:'danger', on:{ click:deleteSel } }, 'Delete')));
+  insp.append(el('p', { class:'note' }, `Stores ${Object.keys(c.look.lights).length} lights (colour, intensity, pan/tilt, beam, effect), plus dimmer, haze and ${c.look.mode} mode. Positions aren't part of a cue.`));
+}
+function renderCuesLight(){ const keep = selected; renderCues(); selected = keep; }
+function moveCue(c, dir){ const i = S.cues.indexOf(c), j = i + dir; if (j < 0 || j >= S.cues.length) return; [S.cues[i], S.cues[j]] = [S.cues[j], S.cues[i]]; renderCues(); renderInspector(); markDirty(); }
+
+/* ---------- modes / top bar ---------- */
+function setMode(m){
+  S.mode = m;
+  $('#mShow').classList.toggle('on', m==='show'); $('#mWork').classList.toggle('on', m==='work'); $('#mBlack').classList.toggle('on', m==='blackout');
+  S.models.forEach(x => x.rt && applySelfLit(x)); markDirty();
+}
+function syncTopUI(){ $('#dimmer').value = S.dimmer; $('#haze').value = S.haze; $('#glow').value = S.glow; $('#eventName').value = S.eventName; $('#teamA').value = S.teamA; $('#teamB').value = S.teamB; $('#behind').checked = S.behind; $('#placeholder').checked = S.placeholder; }
+$('#mShow').onclick = () => setMode('show'); $('#mWork').onclick = () => setMode('work'); $('#mBlack').onclick = () => setMode('blackout');
+$('#dimmer').oninput = e => { S.dimmer = +e.target.value; markDirty(); };
+$('#haze').oninput = e => { S.haze = +e.target.value; markDirty(); };
+$('#glow').oninput = e => { S.glow = +e.target.value; markDirty(); };
+$('#eventName').oninput = e => { S.eventName = e.target.value; markDirty(); };
+$('#teamA').oninput = e => { S.teamA = e.target.value; markDirty(); };
+$('#teamB').oninput = e => { S.teamB = e.target.value; markDirty(); };
+$('#behind').onchange = e => { S.behind = e.target.checked; buildStands(); markDirty(); };
+$('#placeholder').onchange = e => { S.placeholder = e.target.checked; applyVenue(); markDirty(); };
+function applyVenue(){ stageGroup.visible = S.placeholder; stageGroup.traverse(o => { if (o.isMesh) o.raycast = S.placeholder ? THREE.Mesh.prototype.raycast : ()=>{}; }); }
+$('#bImport').onclick = () => $('#fModel').click();
+$('#bFolder').onclick = () => $('#fFolder').click();
+$('#fModel').onchange = e => { importFiles(e.target.files); e.target.value = ''; };
+$('#fFolder').onchange = e => { importFiles(e.target.files); e.target.value = ''; };
+$('#bOpen').onclick = () => $('#fProject').click();
+$('#fProject').onchange = e => { if (e.target.files[0]) openProject(e.target.files[0]); e.target.value = ''; };
+$('#bMedia').onclick = () => $('#fMedia').click();
+$('#fMedia').onchange = e => { const f = e.target.files[0]; if (f) setMedia(f); e.target.value = ''; };
+$('#bMediaClear').onclick = () => { if (mediaEl && mediaEl.pause) mediaEl.pause(); mediaTex = null; mediaEl = null; ledMats.forEach(m => { m.map = ledTex; m.needsUpdate = true; }); };
+function setMedia(f){
+  const url = URL.createObjectURL(f);
+  if (f.type.startsWith('video')){ const v = document.createElement('video'); v.src = url; v.muted = true; v.loop = true; v.playsInline = true; v.play().catch(()=>{}); mediaEl = v; mediaTex = new THREE.VideoTexture(v); }
+  else { mediaTex = new THREE.TextureLoader().load(url); mediaEl = null; }
+  mediaTex.colorSpace = THREE.SRGBColorSpace; ledMats.forEach(m => { m.map = mediaTex; m.needsUpdate = true; });
+  toast(`Showing ${f.name} on the LED screens. Media isn't saved in the project file.`, 'ok');
+}
+let clearArmed = 0;
+$('#bClear').onclick = e => {
+  if (performance.now() - clearArmed > 3000){ clearArmed = performance.now(); e.target.textContent = 'Click again to clear'; setTimeout(() => e.target.textContent = 'Clear rig', 3000); return; }
+  e.target.textContent = 'Clear rig'; clearRig(); markDirty(); toast('Rig cleared. Imported models were kept.');
+};
+$('#bExample').onclick = () => { clearRig(); exampleRig(); markDirty(); toast('Example rig loaded with 5 cues. Press Play show.', 'ok'); };
+function clearRig(){ stopShow(); tc.detach(); S.devices.forEach(disposeDevice); S.devices = []; S.cues = []; S.onAir = null; PB.idx = -1; setOnAir(null); select(null); refreshCamBar(); renderCues(); }
+$('#bPlay').onclick = () => PB.playing ? stopShow() : playShow();
+$('#bNext').onclick = () => goCue(PB.idx + 1);
+$('#bRec').onclick = recordCue;
+
+/* palette */
+for (const [k,T] of Object.entries(TYPE)){
+  const target = T.kind==='light' ? '#palLights' : T.kind==='camera' ? '#palCams' : '#palRig';
+  $(target).append(el('button', { 'data-type':k, on:{ click:() => setPlacing(placing===k ? null : k) } }, el('b', {}, T.label), el('span', {}, T.sub)));
+}
+VIEWS.forEach(([n,p,t]) => $('#views').append(el('button', { on:{ click:() => { setOnAir(null); exitSeat(false); setPlan(false); flyTo(p,t); } } }, n)));
+
+/* keyboard */
+const keys = {};
+addEventListener('keydown', e => {
+  const tag = (e.target.tagName||'').toLowerCase(); if (tag==='input' || tag==='select' || tag==='textarea') return;
+  keys[e.code] = true;
+  if (e.key==='Escape'){ if (placing) setPlacing(null); else if (seatMode) exitSeat(true); else if (S.onAir) setOnAir(null); else select(null); }
+  else if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey){ const c = camDevices()[+e.key-1]; if (c) setOnAir(c.id); }
+  else if (e.key==='0') setOnAir(null);
+  else if (e.key==='v' || e.key==='V'){ seatMode ? exitSeat(true) : enterSeat(); }
+  else if (e.key==='g' || e.key==='G') goCue(PB.idx + 1);
+  else if (e.key==='t' || e.key==='T') tc.setMode('translate');
+  else if (e.key==='r' || e.key==='R') tc.setMode('rotate');
+  else if (e.key==='Delete' || e.key==='Backspace') deleteSel();
+  else if ((e.ctrlKey||e.metaKey) && e.key==='d'){ e.preventDefault(); duplicateSel(); }
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+function stepFly(dt){
+  if (S.onAir || planMode || seatMode) return;
+  const f = (keys.KeyW?1:0) - (keys.KeyS?1:0), s = (keys.KeyD?1:0) - (keys.KeyA?1:0), u = (keys.KeyE?1:0) - (keys.KeyQ?1:0);
+  if (!f && !s && !u) return;
+  const sp = (keys.ShiftLeft||keys.ShiftRight ? 40 : 14)*dt;
+  const fw = controls.target.clone().sub(camera.position); fw.y = 0; fw.normalize(); const rt = V3().crossVectors(fw, V3(0,1,0));
+  const mv = V3().addScaledVector(fw, f*sp).addScaledVector(rt, s*sp).add(V3(0, u*sp, 0));
+  camera.position.add(mv); controls.target.add(mv);
+}
+
+/* ---------- save / open / export ---------- */
+let DL = null; try { if (window.claude && window.claude.use) window.claude.use('downloads').then(d => DL = d).catch(()=>{}); } catch {}
+async function saveFile(filename, data){
+  if (DL){
+    try { await DL.save({ filename, data }); toast(`Saved ${filename}.`, 'ok'); return; }
+    catch(e){ if (e && e.code==='declined') return toast('Save cancelled.'); if (e && e.code==='rate_limited') return toast('A save is already waiting for your OK. Try again in a moment.'); }
+  }
+  const blob = data instanceof Blob ? data : new Blob([data]);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); toast(`Saved ${filename}.`, 'ok');
+}
+const slug = () => (S.eventName || 'arena').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g,'').toLowerCase() || 'arena';
+function b64(buf){ let s = ''; const u = new Uint8Array(buf), C = 0x8000; for (let i=0;i<u.length;i+=C) s += String.fromCharCode.apply(null, u.subarray(i, i+C)); return btoa(s); }
+function unb64(str){ const s = atob(str), u = new Uint8Array(s.length); for (let i=0;i<s.length;i++) u[i] = s.charCodeAt(i); return u; }
+function serialize(withFiles){
+  return (async () => ({
+    app:'esports-arena-planner', version:1,
+    settings:{ eventName:S.eventName, teamA:S.teamA, teamB:S.teamB, mode:S.mode, dimmer:S.dimmer, haze:S.haze, glow:S.glow, behind:S.behind, placeholder:S.placeholder },
+    nextId:S.nextId,
+    devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, p:d.p })),
+    cues:S.cues,
+    models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotY:m.rotY,
+      files: await Promise.all((m.files||[]).map(async f => ({ name:f.name, data:b64(await f.arrayBuffer()) }))) }))) : S.models.map(m => ({ id:m.id, name:m.name }))
+  }))();
+}
+$('#bSave').onclick = async () => { toast('Packing project…'); const j = await serialize(true); await saveFile(`${slug()}-project.json`, JSON.stringify(j)); };
+async function openProject(file){
+  try { const j = JSON.parse(await file.text()); if (j.app!=='esports-arena-planner') throw new Error('This file isn\'t an Arena Planner project.');
+    loadProject(j, true); toast(`Opened ${file.name}.`, 'ok'); }
+  catch(e){ toast(`Couldn't open ${file.name}. ${e.message}`, 'err'); }
+}
+function loadProject(j, withModels){
+  clearRig(); S.models.slice().forEach(m => m.rt && modelGroup.remove(m.rt.g)); S.models = [];
+  for (let i=placeTargets.length-1;i>=0;i--) if (placeTargets[i].userData.modelId) placeTargets.splice(i,1);
+  Object.assign(S, j.settings || {}); S.nextId = j.nextId || 1;
+  for (const d of j.devices || []){ const T = TYPE[d.type]; if (!T) continue; const nd = { ...d, p:{ ...T.d, ...d.p } }; S.devices.push(nd); buildDevice(nd); }
+  S.cues = j.cues || [];
+  syncTopUI(); setMode(S.mode); buildStands(); applyVenue(); refreshCamBar(); renderCues(); select(null);
+  if (withModels) for (const m of j.models || []){ if (!m.files || !m.files.length) continue;
+    const files = m.files.map(f => new File([unb64(f.data)], f.name)); const rec = { id:m.id, name:m.name, units:m.units||'auto', selfLit:m.selfLit!==false, visible:m.visible!==false, pos:m.pos, rotY:m.rotY||0 };
+    S.models.push(rec); importFiles(files, rec); }
+  else if ((j.models||[]).length) toast(`Your last session had ${j.models.length} imported model${j.models.length>1?'s':''}. Models are only kept in saved project files: use Open to load yours, or import the model again.`, 'info', 9000);
+}
+$('#bShot').onclick = () => { renderFrame(); canvas.toBlob(b => saveFile(`${slug()}-${S.onAir ? getDev(S.onAir).name.replace(/\W+/g,'-').toLowerCase() : 'view'}.png`, b), 'image/png'); };
+$('#bKit').onclick = () => {
+  const rows = [['Category','Type','Name','X m','Y m','Z m','Mount','Details']];
+  for (const d of S.devices){ const T = TYPE[d.type], p = d.p; let det = '';
+    if (T.kind==='light') det = d.type==='pyro' ? `${p.style}, ${p.height} m, ${p.duration} s` : d.type==='laser' ? `${p.beams} beams, ${p.spread}°` : d.type==='matrix' ? '5x5 pixel' : `${p.angle}° beam${d.type==='toner'?`, ${p.cells} cells`:''}`;
+    else if (T.kind==='camera') det = `${p.focal} mm` + (d.type==='cam_jib' ? `, ${p.arm} m arm` : `, lens ${p.height} m`);
+    else det = `${p.length} m`;
+    rows.push([T.kind, T.label, d.name, d.pos[0].toFixed(2), d.pos[1].toFixed(2), d.pos[2].toFixed(2), d.mount||'', det]); }
+  for (const m of S.models) rows.push(['model','3D model',m.name, ...m.pos.map(v=>(+v).toFixed(2)), '', m.rt ? `${m.rt.size.x.toFixed(1)} x ${m.rt.size.z.toFixed(1)} x ${m.rt.size.y.toFixed(1)} m` : '']);
+  const counts = {}; S.devices.forEach(d => counts[TYPE[d.type].label] = (counts[TYPE[d.type].label]||0)+1);
+  rows.push([]); rows.push(['Totals']); for (const [k,v] of Object.entries(counts)) rows.push([k, v]);
+  const csv = rows.map(r => r.map(c => /[",\n]/.test(String(c)) ? `"${String(c).replace(/"/g,'""')}"` : c).join(',')).join('\n');
+  saveFile(`${slug()}-kit-list.csv`, csv);
+};
+let dirtyT = null;
+function markDirty(){ clearTimeout(dirtyT); dirtyT = setTimeout(async () => { try { localStorage.setItem('arena-planner-v1', JSON.stringify(await serialize(false))); } catch {} }, 600); }
+
+/* ---------- example rig ---------- */
+function exampleRig(){
+  const tr = (x,y,z,L,r=0) => addDevice('truss', V3(x,y,z), { p:{ length:L, rotY:r } });
+  tr(0, 11, SF-1, 34); tr(0, 12.5, -HD+8, 30); tr(-19, 11, -HD+9, 16, 90); tr(19, 11, -HD+9, 16, 90); tr(0, 13, -6, 40);
+  const hang = (type, x, y, z, p={}) => addDevice(type, V3(x, y-0.45, z), { mount:'hung', p });
+  for (let i=0;i<10;i++){ const x = -15 + i*(30/9); hang('moving', x, 11, SF-1, { tilt:30, pan:0, color:'#3f9dff' }); }
+  for (let i=0;i<6;i++){ const d = hang('wash', -12.5 + i*5, 12.5, -HD+8, { color:'#7a3cff' }); aimLight(d, V3(d.pos[0], DECK_H, -HD+10)); }
+  hang('strobe', -16, 12.5, -HD+8); hang('strobe', 16, 12.5, -HD+8);
+  for (const x of [-15,-5,5,15]){ const d = hang('moving', x, 13, -6, { color:'#ff5a3c' }); aimLight(d, V3(x*0.6, DECK_H, -HD+10)); }
+  hang('laser', -6, 12.5, -HD+8, { pan:180, tilt:82, pattern:'fan', color:'#2bff7a' }); hang('laser', 6, 12.5, -HD+8, { pan:180, tilt:82, pattern:'fan', color:'#2bff7a', phase:.5 });
+  for (const [x,z] of [[-HW-17,-12],[HW+17,-12],[-24,HD+18],[24,HD+18]]){ const d = addDevice('stadium', V3(x, 13, z)); aimLight(d, STAGE_C); }
+  for (const x of [-10,10]){ const d = addDevice('toner', V3(x, DECK_H, SF-0.5)); aimLight(d, V3(x*2.5, 6, HD+8)); }
+  for (const x of [-17,17]) addDevice('matrix', V3(x, DECK_H, SF-0.6), { p:{ pan:180, tilt:90, pattern:x<0?'wave':'rings' } });
+  for (const x of [-14,-5,5,14]) addDevice('pyro', V3(x, DECK_H, SF-0.5), { p:{ style: Math.abs(x)>10 ? 'flame jet' : 'fountain', height: Math.abs(x)>10 ? 5 : 7 } });
+  const c1 = addDevice('cam_tripod', V3(0, 0.6, 12), { name:'CAM 1 · FOH wide', p:{ focal:35 } }); aimCam(c1, V3(0, 4.5, -HD+8));
+  const c2 = addDevice('cam_jib', V3(-13, 0, -21), { name:'CAM 2 · Jib', p:{ arm:8, swing:35, elev:22, focal:20 } }); aimCam(c2, V3(0, 3, -HD+10));
+  const c3 = addDevice('cam_ptz', V3(-17, DECK_H, -HD+4), { name:'CAM 3 · Player PTZ', p:{ height:2.2, focal:30 } }); aimCam(c3, V3(-7.5, DECK_H+1.2, -HD+9.4));
+  const c4 = addDevice('cam_steadi', V3(7, 0, -20), { name:'CAM 4 · Steadicam', p:{ focal:24 } }); aimCam(c4, V3(0, DECK_H+2, -HD+10));
+  // cues
+  const L = t => S.devices.filter(d => d.type===t);
+  const mh = L('moving'), wash = L('wash'), strobe = L('strobe'), stad = L('stadium'), toner = L('toner'), mtx = L('matrix'), las = L('laser');
+  const set = (list, p) => list.forEach((d,i) => Object.assign(d.p, typeof p==='function' ? p(d,i) : p));
+  const rec = (name, hold, fadeT, cam, pyro) => S.cues.push({ id:S.nextId++, name, hold, fade:fadeT, cam:cam?cam.id:null, pyro, look:captureLook() });
+  S.mode = 'show'; S.dimmer = 0.85; S.haze = 0.55;
+  set(mh, (d,i) => ({ on:true, intensity:.65, color:'#3f9dff', effect:'sweep', speed:.4, phase:i/14 })); set(wash, { on:true, intensity:.7, color:'#2a4dff', effect:'pulse', speed:.4 });
+  set(strobe, { on:false }); set(stad, { on:true, intensity:.25, effect:'none' }); set(toner, { on:true, intensity:.35, effect:'warm pulse' }); set(mtx, { on:true, intensity:.6, pattern:'wave' }); set(las, { on:false });
+  rec('Doors & walk-in', 7, 2, c1, false);
+  S.dimmer = 1;
+  set(mh, (d,i) => ({ on:true, intensity:1, color:'#ff2a3a', effect:'circle', speed:1.2, phase:i/14 })); set(wash, (d,i) => ({ intensity:1, color:'#ff1030', effect:'chase', speed:1.5, phase:i/6 }));
+  set(stad, { on:false }); set(toner, { on:false }); set(mtx, { pattern:'chase', color:'#ff2040', color2:'#ff9020' }); set(las, { on:true, intensity:1, color:'#ff2a2a', pattern:'cone', speed:1.2 });
+  rec('Countdown', 5, 1, c2, false);
+  set(mh, (d,i) => ({ color:'#ffffff', effect:'ballyhoo', speed:1.6, phase:i/14 })); set(wash, { color:'#ffffff', effect:'none' }); set(strobe, { on:true, intensity:1, effect:'flash', rate:10 });
+  set(toner, { on:true, intensity:1, effect:'chase' }); set(mtx, { pattern:'sparkle', color:'#ffffff', color2:'#ffd080' }); set(las, { color:'#2bff7a', pattern:'fan', speed:1 });
+  rec('Team intro hit', 5, 0, c4, true);
+  set(mh, (d,i) => ({ color: d.pos[0] < 0 ? '#3fb8ff' : '#ff7a3d', effect:'none', intensity:.8 })); mh.slice(0,10).forEach(d => aimLight(d, V3(d.pos[0]*0.55, DECK_H+1, -HD+9.5)));
+  set(wash, d => ({ color: d.pos[0] < 0 ? '#1d7dff' : '#ff6a1d', effect:'none', intensity:.85 })); set(strobe, { on:false }); set(stad, { on:true, intensity:.7 }); set(toner, { on:false });
+  set(mtx, { pattern:'rings', color:'#3fb8ff', color2:'#ff7a3d' }); set(las, { on:false });
+  rec('Match live', 8, 2, c3, false);
+  set(mh, (d,i) => ({ effect:'colour cycle', speed:1.2, phase:i/14, intensity:1 })); mh.slice(0,10).forEach(d => { d.p.tilt = 30; d.p.pan = 0; }); set(wash, (d,i) => ({ effect:'colour cycle', phase:i/6 }));
+  set(strobe, { on:true, effect:'random', rate:8 }); set(stad, { on:false }); set(toner, { on:true, effect:'warm pulse', intensity:1 }); set(las, { on:true, pattern:'scan', color:'#2bd0ff', speed:1.4 });
+  set(mtx, { pattern:'sparkle', color:'#ffd040', color2:'#ff40d0' });
+  rec('Victory', 8, 0.5, c2, true);
+  PB.idx = -1; applyLook(S.cues[0].look, 0); syncTopUI(); setMode('show');
+  refreshCamBar(); renderCues(); renderInspector();
+}
+
+/* ---------- render loop ---------- */
+const view2 = $('#view'); let VW = 1, VH = 1;
+function resize(){
+  const r = view2.getBoundingClientRect(); VW = Math.max(1, r.width); VH = Math.max(1, r.height);
+  renderer.setSize(VW, VH, false); composer.setSize(VW, VH);
+  bloom.resolution.set(VW/2, VH/2);
+  camera.aspect = VW/VH; camera.updateProjectionMatrix();
+  const half = 70; ortho.left = -half*VW/VH; ortho.right = half*VW/VH; ortho.top = half; ortho.bottom = -half; ortho.updateProjectionMatrix();
+  pMat.uniforms.uScale.value = VH * 0.9;
+}
+new ResizeObserver(resize).observe(view2);
+let last = performance.now(), fpsAcc = 0, fpsN = 0, fpsShow = 60, ledT = 0;
+function renderFrame(){
+  const cam = activeCam();
+  if (S.onAir){ cam.aspect = VW/VH; cam.updateProjectionMatrix(); }
+  renderPass.camera = cam;
+  const airDev = S.onAir ? getDev(S.onAir) : null; if (airDev && airDev.rt) airDev.rt.camHead.visible = false;
+  bloom.strength = S.glow * (S.mode==='show' ? 1 : 0.25);
+  renderer.setScissorTest(false); renderer.setViewport(0,0,VW,VH);
+  composer.render();
+  const pv = $('#preview');
+  const selCam = selected && selected.kind==='dev' && TYPE[getDev(selected.id)?.type]?.kind==='camera' ? getDev(selected.id) : null;
+  if (selCam && selCam.id !== S.onAir && selCam.rt){
+    pv.hidden = false; $('#previewLbl').textContent = 'PREVIEW · ' + selCam.name;
+    const vr = view2.getBoundingClientRect(), r = pv.getBoundingClientRect();
+    const x = r.left - vr.left, y = VH - (r.bottom - vr.top), w = r.width, h = r.height;
+    const c = selCam.rt.cam; c.aspect = w/h; c.updateProjectionMatrix();
+    renderer.setViewport(x,y,w,h); renderer.setScissor(x,y,w,h); renderer.setScissorTest(true);
+    renderer.autoClear = true; selCam.rt.camHead.visible = false; renderer.render(scene, c); selCam.rt.camHead.visible = true;
+    renderer.setScissorTest(false); renderer.setViewport(0,0,VW,VH);
+  } else pv.hidden = true;
+  if (airDev && airDev.rt) airDev.rt.camHead.visible = true;
+}
+function loop(){
+  requestAnimationFrame(loop);
+  const now = performance.now(), dt = Math.min(0.05, (now-last)/1000); last = now; const t = now/1000;
+  if (fly){ const k = clamp((now - fly.s)/fly.dur, 0, 1), e = 1 - Math.pow(1-k, 3); camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.t0, fly.t1, e); if (k>=1) fly = null; }
+  stepFly(dt);
+  if (planMode) oControls.update(); else controls.update();
+  stepFade(); stepPlayback();
+  hemi.intensity = S.mode==='work' ? 1.25 : S.mode==='show' ? 0.07 : 0.015;
+  sun.intensity = S.mode==='work' ? 1.6 : 0;
+  scene.fog.density = S.mode==='show' ? 0.002 + S.haze*0.006 : 0.0015;
+  scene.fog.color.set(S.mode==='work' ? 0x1a1f28 : 0x07090d);
+  updateLights(t, dt); stepParticles(dt); updateCameras(t);
+  if (now - ledT > 66){ ledT = now; drawLED(t); }
+  ribTex.offset.x = (t*0.04) % 1;
+  const ledK = S.mode==='blackout' ? 0.02 : S.mode==='show' ? 1.25 : 0.9;
+  ledMats.forEach(m => m.color.setScalar(ledK));
+  renderFrame();
+  fpsAcc += dt; fpsN++; if (fpsAcc > 0.5){ fpsShow = fpsN/fpsAcc; fpsAcc = 0; fpsN = 0;
+    $('#fps').textContent = `${fpsShow.toFixed(0)} fps · ${realUsed}/${POOL} real lights${realWanted>POOL?` (${realWanted-POOL} beam-only)`:''} · ${S.devices.length} devices`; }
+}
+
+/* ---------- boot ---------- */
+buildStands(); applyVenue(); resize();
+let restored = false;
+try { const raw = localStorage.getItem('arena-planner-v1'); if (raw){ const j = JSON.parse(raw); if (j && j.app==='esports-arena-planner' && (j.devices||[]).length){ loadProject(j, false); restored = true; } } } catch {}
+if (!restored){ exampleRig(); syncTopUI(); }
+refreshCamBar(); renderCues(); renderInspector();
+if (restored) toast('Restored your last session from this browser.', 'ok');
+document.fonts && document.fonts.ready.then(() => { floorLabel.userData.redraw && floorLabel.userData.redraw(); });
+loop();
+</script>

@@ -98,6 +98,14 @@ button.on .kbd,button.air .kbd{color:inherit;border-color:currentColor}
 .dims{font-family:var(--f-mono);font-size:11.5px;background:#0e141d;border:1px solid var(--line);border-radius:6px;padding:8px;line-height:1.6}
 .xyz{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
 .xyz input{width:100%}
+.mats{max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#0e141d}
+.matrow{display:flex;align-items:center;gap:6px;padding:5px 6px;border-bottom:1px solid var(--line)}
+.matrow:last-child{border-bottom:0}
+.matrow.sel{background:#1d2a3a;outline:1px solid var(--sel)}
+.matrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.matrow .st{font-family:var(--f-mono);font-size:10px;color:var(--muted)}
+.matrow .st.on{color:var(--ok)}
+.matrow button{padding:3px 7px;font-size:11px}
 hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 @media (max-width:900px){
   body{overflow:auto}
@@ -138,6 +146,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <input id="fFolder" type="file" multiple hidden webkitdirectory>
     <input id="fProject" type="file" hidden accept=".json">
     <input id="fMedia" type="file" hidden accept="image/*,video/*">
+    <input id="fTex" type="file" hidden>
   </header>
 
   <aside id="left">
@@ -498,7 +507,7 @@ function schema(type){
   } else if (k==='camera'){
     f.push({k:'focal',l:'Focal mm',t:'range',min:8,max:400,step:1},{k:'pan',l:'Pan °',t:'range',min:-180,max:180,step:.5},{k:'tilt',l:'Tilt °',t:'range',min:-80,max:60,step:.5});
     if (type==='cam_jib') f.push({k:'arm',l:'Arm m',t:'range',min:2,max:15,step:.1},{k:'swing',l:'Swing °',t:'range',min:-180,max:180,step:1},{k:'elev',l:'Elevation °',t:'range',min:-40,max:60,step:1});
-    else f.push({k:'height',l:'Lens height m',t:'range',min:.3,max:12,step:.05});
+    else f.push({k:'height',l:'Lens height m',t:'range',min:.3,max:40,step:.05});
     f.push({k:'motion',l:'Motion preview',t:'select',o:type==='cam_jib'?['none','pan sweep','jib arc']:['none','pan sweep']});
   } else if (k==='truss'){
     f.push({k:'length',l:'Length m',t:'range',min:2,max:40,step:.5},{k:'rotY',l:'Rotation °',t:'range',min:-180,max:180,step:1});
@@ -915,10 +924,13 @@ async function importFiles(fileList, fromProject=null){
       const root = await parseModel(main, files, missing);
       if (!root) throw new Error('The file loaded but contained nothing.');
       const kept = files.filter(f => f===main || !MAIN_EXT.includes(ext(f.name)) || (ext(main.name)==='gltf' && ext(f.name)==='bin'));
-      const m = fromProject ? Object.assign(fromProject, { files: kept }) : { id:S.nextId++, name: main.name.replace(/\.[^.]+$/,''), units:'auto', selfLit:true, visible:true, pos:null, rotY:0, files: kept };
+      const m = fromProject ? Object.assign(fromProject, { files: kept }) : { id:S.nextId++, name: main.name.replace(/\.[^.]+$/,''), units:'auto', selfLit:true, visible:true, pos:null, rotX:0, rotY:0, rotZ:0, scale:[1,1,1], tex:[], files: kept };
+      m.scale = m.scale || [1,1,1]; m.tex = m.tex || [];
+      m.rt && modelGroup.remove(m.rt.g);
       installModel(m, root);
+      for (const t of m.tex) applyTex(m, t, false);
       if (!fromProject){ S.models.push(m); select({ kind:'model', id:m.id }); }
-      const sz = m.rt.size;
+      const sz = modelSize(m);
       toast(`Imported ${main.name}: ${sz.x.toFixed(1)} × ${sz.z.toFixed(1)} × ${sz.y.toFixed(1)} m (W × D × H), units ${m.rt.unitsUsed}. Check the size in the inspector.`, 'ok', 7000);
       if (missing.size) toast(`Some textures were not found: ${[...missing].slice(0,6).join(', ')}${missing.size>6?'…':''}. Select the texture files together with the model, or import the whole folder.`, 'err', 14000);
       if (S.placeholder && !fromProject){ S.placeholder = false; $('#placeholder').checked = false; applyVenue(); }
@@ -930,6 +942,7 @@ async function importFiles(fileList, fromProject=null){
   }
 }
 function installModel(m, root){
+  m.rt_gltf = /\.(glb|gltf)$/i.test(m.files.find(f => MAIN_EXT.includes(ext(f.name)))?.name || '');
   const strip = []; root.traverse(o => { if (o.isLight || o.isCamera) strip.push(o); }); strip.forEach(o => o.parent && o.parent.remove(o));
   const inner = new THREE.Group(); inner.add(root);
   const g = new THREE.Group(); g.add(inner); g.userData.modelId = m.id;
@@ -939,7 +952,7 @@ function installModel(m, root){
   const mats = new Set();
   root.traverse(o => { if (o.isMesh){ o.userData.modelId = m.id; if (!o.material) o.material = new THREE.MeshStandardMaterial({ color:0x9aa4b2 });
     (Array.isArray(o.material)?o.material:[o.material]).forEach(mt => { mats.add(mt); if (mt.map) mt.map.colorSpace = THREE.SRGBColorSpace; }); } });
-  m.rt = { g, inner, root, raw, auto, mats:[...mats] };
+  m.rt = { g, inner, root, raw, auto, mats:[...mats], gltf:m.rt_gltf, selMat:-1 };
   modelGroup.add(g); placeTargets.push(g);
   applyModelUnits(m, !m.pos);
 }
@@ -950,8 +963,9 @@ function applyModelUnits(m, place){
   const b = new THREE.Box3().setFromObject(rt.inner); const c = b.getCenter(V3());
   rt.inner.position.set(-c.x, -b.min.y, -c.z);
   rt.size = b.getSize(V3());
-  if (place){ m.pos = [0, 0, -HD + 1 + rt.size.z/2]; }
-  rt.g.position.fromArray(m.pos); rt.g.rotation.y = (m.rotY||0)*DEG; rt.g.visible = m.visible !== false;
+  if (place){ const k = S.models.filter(x => x!==m && x.rt).length;
+    m.pos = k===0 ? [0, 0, -HD + 1 + rt.size.z/2] : [-24 + (k-1)%5*12, 0, -8 + Math.floor((k-1)/5)*14]; }
+  rt.g.position.fromArray(m.pos); rt.g.rotation.set((m.rotX||0)*DEG, (m.rotY||0)*DEG, (m.rotZ||0)*DEG); rt.g.scale.fromArray(m.scale || [1,1,1]); rt.g.visible = m.visible !== false;
   applySelfLit(m);
 }
 function applySelfLit(m){
@@ -961,8 +975,64 @@ function applySelfLit(m){
     else if (mt.userData.origEm === undefined){ mt.userData.origEm = mt.emissive.getHex(); }
     mt.needsUpdate = true; }
 }
-function removeModel(m){ modelGroup.remove(m.rt.g); const i = placeTargets.indexOf(m.rt.g); if (i>=0) placeTargets.splice(i,1); S.models = S.models.filter(x => x!==m); if (selected && selected.id===m.id) select(null); markDirty(); }
+function removeModel(m){ (m.tex||[]).forEach(t => t.tex && t.tex.userData.video && t.tex.userData.video.pause()); modelGroup.remove(m.rt.g); const i = placeTargets.indexOf(m.rt.g); if (i>=0) placeTargets.splice(i,1); S.models = S.models.filter(x => x!==m); if (selected && selected.id===m.id) select(null); markDirty(); }
 const getModel = id => S.models.find(m => m.id===id);
+
+const modelSize = m => m.rt.size.clone().multiply(V3(...(m.scale||[1,1,1])).set(Math.abs(m.scale[0]), Math.abs(m.scale[1]), Math.abs(m.scale[2])));
+const matName = (m, i) => i==='all' ? 'all surfaces' : (m.rt.mats[i] && m.rt.mats[i].name) || `Surface ${i+1}`;
+function meshesUsing(m, mats){ const out = []; m.rt.root.traverse(o => { if (o.isMesh){ const ms = Array.isArray(o.material) ? o.material : [o.material]; if (ms.some(x => mats.includes(x))) out.push(o); } }); return out; }
+let texTarget = null;
+const IMG_ACCEPT = '.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp';
+const VID_ACCEPT = '.mp4,.webm,.mov,.m4v,video/mp4,video/webm,video/quicktime';
+function chooseTex(m, idx, kind){ texTarget = { m, idx, kind }; const f = $('#fTex'); f.accept = kind==='video' ? VID_ACCEPT : IMG_ACCEPT; f.click(); }
+$('#fTex').onchange = e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !texTarget) return;
+  const { m, idx, kind } = texTarget; texTarget = null;
+  const isVid = /^video\//.test(f.type) || /\.(mp4|webm|mov|m4v)$/i.test(f.name), isImg = /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+  if (kind==='video' && !isVid) return toast(`${f.name} isn't a video. Choose an MP4 (H.264) or WebM file.`, 'err');
+  if (kind==='image' && !isImg) return toast(`${f.name} isn't an image. Choose a JPEG or PNG file.`, 'err');
+  if (idx==='all') { clearTex(m, 'all'); } else clearTex(m, idx);
+  const rec = { mat:idx, kind, name:f.name, file:f, rx:1, ry:1 }; m.tex.push(rec); applyTex(m, rec, true); renderInspector(); markDirty();
+};
+function makeTex(rec, flip){
+  const url = URL.createObjectURL(rec.file); let tex;
+  if (rec.kind==='video'){
+    const v = document.createElement('video'); v.src = url; v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
+    v.addEventListener('error', () => toast(`${rec.name} can't play in this browser. Convert it to MP4 (H.264) and try again.`, 'err'));
+    v.play().catch(()=>{}); tex = new THREE.VideoTexture(v); tex.userData.video = v;
+  } else tex = new THREE.TextureLoader().load(url, undefined, undefined, () => toast(`Couldn't read ${rec.name} as an image. Use a JPEG or PNG.`, 'err'));
+  tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = flip; tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(rec.rx||1, rec.ry||1);
+  return tex;
+}
+function applyTex(m, rec, announce){
+  const rt = m.rt; const tex = makeTex(rec, !rt.gltf); rec.tex = tex;
+  const targets = rec.mat==='all' ? rt.mats : [rt.mats[rec.mat]].filter(Boolean);
+  for (const mt of targets){ if (mt.userData.origMap === undefined){ mt.userData.origMap = mt.map || null; mt.userData.origCol = mt.color ? mt.color.getHex() : null; }
+    mt.map = tex; if (mt.color) mt.color.set(0xffffff); mt.needsUpdate = true; }
+  applySelfLit(m);
+  if (announce){ const noUV = meshesUsing(m, targets).some(o => !o.geometry.attributes.uv);
+    toast(noUV ? `Applied ${rec.name}, but part of ${matName(m, rec.mat)} has no UV mapping, so the ${rec.kind} may show as one flat colour. Add UVs in your 3D app and re-export.` : `Applied ${rec.name} to ${matName(m, rec.mat)}.`, noUV ? 'err' : 'ok'); }
+}
+function clearTex(m, idx){
+  const gone = (m.tex||[]).filter(t => idx==='all' || t.mat===idx || t.mat==='all');
+  gone.forEach(t => t.tex && t.tex.userData.video && t.tex.userData.video.pause());
+  m.tex = (m.tex||[]).filter(t => !gone.includes(t));
+  const targets = idx==='all' || gone.some(t => t.mat==='all') ? m.rt.mats : [m.rt.mats[idx]];
+  for (const mt of targets){ if (mt && mt.userData.origMap !== undefined){ mt.map = mt.userData.origMap; if (mt.color && mt.userData.origCol != null) mt.color.setHex(mt.userData.origCol); mt.needsUpdate = true; } }
+  for (const t of m.tex){ if (t.mat!=='all') { const mt = m.rt.mats[t.mat]; if (mt){ mt.map = t.tex; mt.needsUpdate = true; } } }
+  applySelfLit(m);
+}
+function texFor(m, i){ return (m.tex||[]).find(t => t.mat===i) || (m.tex||[]).find(t => t.mat==='all'); }
+function duplicateModel(m){
+  const rec = { id:S.nextId++, name:m.name + ' copy', units:m.units, selfLit:m.selfLit, visible:true, pos:[m.pos[0]+6, m.pos[1], m.pos[2]+6],
+    rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:[...(m.scale||[1,1,1])], tex:(m.tex||[]).map(t => ({ mat:t.mat, kind:t.kind, name:t.name, file:t.file, rx:t.rx, ry:t.ry })) };
+  S.models.push(rec); importFiles(m.files, rec).then(() => select({ kind:'model', id:rec.id }));
+}
+let pickSurface = null;
+function setPickSurface(id){
+  pickSurface = id; const h = $('#hint');
+  if (id){ setPlacing(null); h.hidden = false; h.textContent = 'Click a surface on the model to pick it (for example the LED screen). Esc to cancel.'; } else if (!placing && !seatMode) h.hidden = true;
+}
 
 /* ---------- drag & drop (files and folders) ---------- */
 const view = $('#view');
@@ -990,11 +1060,36 @@ const mouse = new THREE.Vector2();
 function activeCam(){ if (S.onAir){ const d = getDev(S.onAir); if (d && d.rt) return d.rt.cam; } return planMode ? ortho : camera; }
 function setRay(e){ const r = canvas.getBoundingClientRect(); mouse.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1); ray.setFromCamera(mouse, activeCam()); }
 let downAt = null;
-canvas.addEventListener('pointerdown', e => { downAt = { x:e.clientX, y:e.clientY }; });
+canvas.addEventListener('pointerdown', e => { downAt = { x:e.clientX, y:e.clientY }; aimDrag = S.onAir && e.button===0 ? { x:e.clientX, y:e.clientY } : null; });
+let aimDrag = null;
+canvas.addEventListener('pointermove', e => {
+  if (!aimDrag || !S.onAir || !(e.buttons & 1)) return;
+  const d = getDev(S.onAir); if (!d) return;
+  const k = 0.08 * clamp(35 / (+d.p.focal), 0.05, 2);
+  d.p.pan = +(d.p.pan + (e.clientX - aimDrag.x) * k).toFixed(1); d.p.tilt = +clamp(d.p.tilt + (e.clientY - aimDrag.y) * k, -80, 60).toFixed(1);
+  if (d.p.pan > 180) d.p.pan -= 360; if (d.p.pan < -180) d.p.pan += 360;
+  aimDrag = { x:e.clientX, y:e.clientY }; throttledRefresh(); markDirty();
+});
+canvas.addEventListener('wheel', e => {
+  if (!S.onAir) return; e.preventDefault(); const d = getDev(S.onAir); if (!d) return;
+  d.p.focal = Math.round(clamp(d.p.focal * Math.pow(1.1, -Math.sign(e.deltaY)), 8, 400)); throttledRefresh(); markDirty();
+}, { passive:false });
 canvas.addEventListener('pointerup', e => {
   if (!downAt || Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y) > 5 || e.button!==0) return;
   if (tc.dragging) return;
   setRay(e);
+  if (S.onAir) return;
+  if (pickSurface){
+    const h = ray.intersectObject(modelGroup, true)[0];
+    if (!h) return toast('Click directly on the model.');
+    const mesh = h.object, mat = Array.isArray(mesh.material) ? mesh.material[h.face.materialIndex] : mesh.material;
+    const m = getModel(mesh.userData.modelId); setPickSurface(null);
+    if (!m) return; m.rt.selMat = m.rt.mats.indexOf(mat);
+    select({ kind:'model', id:m.id });
+    const row = document.querySelector('.matrow.sel'); if (row) row.scrollIntoView({ block:'nearest' });
+    toast(`Picked ${matName(m, m.rt.selMat)}. Use Image or Video on the highlighted row.`, 'ok');
+    return;
+  }
   if (seatMode) return pickSeat();
   if (placing) return placeAt(e.shiftKey);
   const hits = ray.intersectObjects([devGroup, ...S.devices.filter(d=>d.rt&&d.rt.camHead).map(d=>d.rt.camHead), ...S.devices.filter(d=>d.rt&&d.rt.arm).map(d=>d.rt.arm), modelGroup], true);
@@ -1038,7 +1133,7 @@ function setPlacing(type){
 
 /* ---------- selection & gizmo ---------- */
 function select(sel){
-  selected = sel; tc.detach();
+  selected = sel; tc.detach(); if (tc.mode==='scale' && !(sel && sel.kind==='model')) tc.setMode('translate');
   if (sel && sel.kind==='dev'){ const d = getDev(sel.id); if (d && d.rt) { tc.attach(d.rt.g); tc.setMode('translate'); } }
   if (sel && sel.kind==='model'){ const m = getModel(sel.id); if (m && m.rt) { tc.attach(m.rt.g); } }
   renderInspector(); renderCues();
@@ -1049,7 +1144,9 @@ function onGizmoMove(){
     if (d.type==='truss') { d.p.rotY = Math.round(o.rotation.y/DEG); }
     else if (TYPE[d.type].kind==='camera' && tc.mode==='rotate'){ d.p.pan = +(d.p.pan + o.rotation.y/DEG).toFixed(1); o.rotation.set(0,0,0); }
     else o.rotation.set(0,0,0);
-  } else if (selected.kind==='model'){ const m = getModel(selected.id); m.pos = [o.position.x, o.position.y, o.position.z]; m.rotY = Math.round(o.rotation.y/DEG); o.rotation.x = o.rotation.z = 0; }
+  } else if (selected.kind==='model'){ const m = getModel(selected.id); m.pos = [o.position.x, o.position.y, o.position.z];
+    m.rotX = Math.round(o.rotation.x/DEG); m.rotY = Math.round(o.rotation.y/DEG); m.rotZ = Math.round(o.rotation.z/DEG);
+    m.scale = [o.scale.x, o.scale.y, o.scale.z].map(v => +v.toFixed(3)); }
   throttledRefresh();
 }
 let refreshT = 0; function throttledRefresh(){ const n = performance.now(); if (n - refreshT > 120){ refreshT = n; refreshInspectorValues(); } }
@@ -1085,13 +1182,13 @@ function renderRigList(){
   if (!S.devices.length && !S.models.length){ insp.append(el('p', { class:'note' }, 'Nothing placed yet. Pick a light or camera on the left, or import your stage model.')); return; }
   const groups = {}; for (const d of S.devices) (groups[d.type] ||= []).push(d);
   if (S.models.length){ const box = el('div', { class:'devlist' }); insp.append(el('h3', {}, `3D models · ${S.models.length}`), box);
-    S.models.forEach(m => box.append(el('button', { on:{ click:() => select({ kind:'model', id:m.id }) } }, m.name, el('small', {}, m.rt ? `${m.rt.size.x.toFixed(0)}×${m.rt.size.z.toFixed(0)} m` : 'not loaded')))); }
+    S.models.forEach(m => box.append(el('button', { on:{ click:() => select({ kind:'model', id:m.id }) } }, m.name, el('small', {}, m.rt ? (s => `${s.x.toFixed(0)}×${s.z.toFixed(0)} m`)(modelSize(m)) : 'not loaded')))); }
   for (const [type, list] of Object.entries(groups)){
     const box = el('div', { class:'devlist' });
     insp.append(el('h3', {}, `${TYPE[type].label} · ${list.length}`), box);
     list.forEach(d => box.append(el('button', { on:{ click:() => select({ kind:'dev', id:d.id }) } }, d.name, el('small', {}, d.mount==='hung'?'hung':''))));
   }
-  insp.append(el('p', { class:'note', style:'margin-top:12px' }, 'Keys: 1–9 take a camera, 0 free view, V seat view, G next cue, T move, R rotate, Del delete, Ctrl+D duplicate, W A S D Q E fly.'));
+  insp.append(el('p', { class:'note', style:'margin-top:12px' }, 'Keys: 1–9 take a camera, 0 free view, V seat view, G next cue, T move, R rotate, Y scale (models), Del delete, Ctrl+D duplicate, W A S D Q E fly.'));
 }
 function renderDevInspector(d){
   if (!d) return renderRigList();
@@ -1123,36 +1220,92 @@ function renderDevInspector(d){
   if (d.type==='pyro') insp.append(el('div', { class:'btns' }, el('button', { class:'primary', on:{ click:() => firePyro(d) } }, 'Fire now'), el('button', { on:{ click:() => S.devices.filter(x=>x.type==='pyro').forEach(firePyro) } }, 'Fire all pyro')));
   if (T.kind==='camera'){
     const n = camDevices().indexOf(d) + 1;
+    const ts = el('select', { id:'dv_ctype', on:{ change:e => { const nt = e.target.value; d.p = { ...TYPE[nt].d, ...d.p, motion:'none' }; if (nt!=='cam_jib' && d.type==='cam_jib') d.p.height = 1.7; d.type = nt; rebuild(d); renderInspector(); refreshCamBar(); markDirty(); } } });
+    ['cam_tripod','cam_ptz','cam_steadi','cam_jib'].forEach(k => ts.append(el('option', { value:k, selected:d.type===k }, TYPE[k].label)));
+    insp.insertBefore(el('div', { class:'row' }, el('label', { for:'dv_ctype' }, 'Camera type'), ts), insp.children[2]);
     insp.append(el('div', { class:'btns' },
       el('button', { class: S.onAir===d.id ? 'on' : 'primary', on:{ click:() => setOnAir(S.onAir===d.id ? null : d.id) } }, S.onAir===d.id ? 'Back to free view (0)' : `Take on air (${n})`),
-      el('button', { on:{ click:() => { aimCam(d, V3(0, DECK_H+1.5, -HD+9)); renderInspector(); markDirty(); } } }, 'Aim at stage')));
+      el('button', { on:{ click:() => { aimCam(d, V3(0, DECK_H+1.5, -HD+9)); renderInspector(); markDirty(); } } }, 'Aim at stage'),
+      el('button', { title:'Put this camera where your 3D view is now', on:{ click:() => { camFromView(d); renderInspector(); } } }, 'Move to my view')));
+    insp.append(el('p', { class:'note' }, 'On air: drag in the view to aim, scroll to zoom. Tip: walk the free view to the shot you want, then Move to my view.'));
     const lens = camLens(d); insp.append(el('div', { class:'dims' }, `Lens ${lens.y.toFixed(2)} m above floor · ${(+d.p.focal)} mm · ${(2*Math.atan(18/(+d.p.focal))/DEG).toFixed(1)}° horizontal FOV`));
     insp.append(el('p', { class:'note' }, 'Focal length is full-frame equivalent. The orange outline in the 3D view shows what this camera sees.'));
   }
 }
+function tripleRow(label, arr, step, onChange, idp, digits=2, title=['X','Y','Z']){
+  const wrap = el('div', { class:'xyz' });
+  ['X','Y','Z'].forEach((a,i) => wrap.append(el('input', { type:'number', id:`${idp}_${a}`, step, value:(+arr[i]).toFixed(digits), title:title[i], 'aria-label':`${label} ${title[i]}`, on:{ change:e => onChange(i, +e.target.value) } })));
+  return el('div', { class:'row' }, el('label', {}, label), wrap);
+}
+function modelDims(m){
+  const s = modelSize(m);
+  return [`W ${s.x.toFixed(2)} m · ${(s.x/FT).toFixed(1)} ft`, el('br'), `D ${s.z.toFixed(2)} m · ${(s.z/FT).toFixed(1)} ft`, el('br'), `H ${s.y.toFixed(2)} m · ${(s.y/FT).toFixed(1)} ft`, el('br'),
+    el('span', { style:'color:var(--muted)' }, `Units: ${m.rt.unitsUsed} · scale ${m.scale.map(v => +(+v).toFixed(3)).join(' × ')}`)];
+}
+function applyModelTransform(m){ const g = m.rt.g; g.position.fromArray(m.pos); g.rotation.set(m.rotX*DEG, m.rotY*DEG, m.rotZ*DEG); g.scale.fromArray(m.scale); const d = $('#md_dims'); if (d){ d.innerHTML = ''; d.append(...modelDims(m)); } markDirty(); }
 function renderModelInspector(m){
   if (!m || !m.rt) return renderRigList();
-  const s = m.rt.size;
-  insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, '3D model')));
+  m.rotX ??= 0; m.rotZ ??= 0; m.scale ??= [1,1,1]; m.tex ??= [];
+  insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, '3D model'), el('span', { class:'note' }, `${S.models.indexOf(m)+1} of ${S.models.length}`)));
   insp.append(el('div', { class:'row' }, el('label', { for:'md_name' }, 'Name'), el('input', { type:'text', id:'md_name', value:m.name, on:{ input:e => { m.name = e.target.value; markDirty(); } } })));
-  insp.append(el('div', { class:'dims', id:'md_dims' },
-    `W ${s.x.toFixed(2)} m · ${(s.x/FT).toFixed(1)} ft`, el('br'), `D ${s.z.toFixed(2)} m · ${(s.z/FT).toFixed(1)} ft`, el('br'), `H ${s.y.toFixed(2)} m · ${(s.y/FT).toFixed(1)} ft`, el('br'),
-    el('span', { style:'color:var(--muted)' }, `Units: ${m.rt.unitsUsed}`)));
+  insp.append(el('div', { class:'dims', id:'md_dims' }, ...modelDims(m)));
   const us = el('select', { id:'md_units', on:{ change:e => { m.units = e.target.value; applyModelUnits(m, false); renderInspector(); markDirty(); } } });
   [['auto','Auto-detect'],['m','Metres'],['cm','Centimetres'],['mm','Millimetres'],['in','Inches'],['ft','Feet']].forEach(([v,l]) => us.append(el('option', { value:v, selected:m.units===v }, l)));
   insp.append(el('div', { class:'row' }, el('label', { for:'md_units' }, 'Model units'), us));
-  insp.append(el('p', { class:'note' }, 'If the size looks wrong (a 30 m stage showing as 3000 m), change the units here.'));
-  insp.append(xyzRow(m.pos, (i, v) => { m.pos[i] = v; m.rt.g.position.fromArray(m.pos); markDirty(); }, 'md_pos'));
-  insp.append(fieldRow({ k:'rotY', l:'Rotation °', t:'range', min:-180, max:180, step:1 }, m, (k, v) => { m.rotY = v; m.rt.g.rotation.y = v*DEG; markDirty(); }, 'md'));
+
+  insp.append(el('h3', {}, 'Move · rotate · scale'));
+  insp.append(el('div', { class:'btns' },
+    el('button', { class: tc.mode==='translate' ? 'on' : '', on:{ click:() => { tc.setMode('translate'); renderInspector(); } } }, 'Move (T)'),
+    el('button', { class: tc.mode==='rotate' ? 'on' : '', on:{ click:() => { tc.setMode('rotate'); renderInspector(); } } }, 'Rotate (R)'),
+    el('button', { class: tc.mode==='scale' ? 'on' : '', on:{ click:() => { tc.setMode('scale'); renderInspector(); } } }, 'Scale (Y)')));
+  insp.append(tripleRow('Position m', m.pos, 0.1, (i,v) => { m.pos[i] = v; applyModelTransform(m); }, 'md_pos'));
+  insp.append(tripleRow('Rotation °', [m.rotX, m.rotY, m.rotZ], 1, (i,v) => { m[['rotX','rotY','rotZ'][i]] = v; applyModelTransform(m); }, 'md_rot', 0));
+  insp.append(tripleRow('Scale ×', m.scale, 0.01, (i,v) => { if (!v) return; if ($('#md_lock').checked){ const r = v / (m.scale[i]||1); m.scale = m.scale.map(x => +(x*r).toFixed(4)); } else m.scale[i] = v; applyModelTransform(m); refreshInspectorValues(); }, 'md_scl', 3, ['Width','Height','Depth']));
+  insp.append(el('div', { class:'row' }, el('label', { for:'md_lock' }, 'Keep proportions'), el('input', { type:'checkbox', id:'md_lock', checked:true })));
+  const fitIn = el('input', { type:'number', id:'md_fit', step:0.1, placeholder:'e.g. 30', style:'flex:1' });
+  const fitAx = el('select', { id:'md_fitax' }, el('option', { value:'x' }, 'width'), el('option', { value:'z' }, 'depth'), el('option', { value:'y' }, 'height'));
+  insp.append(el('div', { class:'row' }, el('label', { for:'md_fit' }, 'Resize so'), fitAx, fitIn, el('button', { on:{ click:() => {
+    const want = +fitIn.value; if (!(want > 0)) return toast('Type the real size in metres first.');
+    const cur = m.rt.size[fitAx.value] * Math.abs(m.scale[{x:0,y:1,z:2}[fitAx.value]]); const r = want / cur;
+    m.scale = m.scale.map(x => +(x*r).toFixed(4)); applyModelTransform(m); refreshInspectorValues(); toast(`Scaled to ${want} m ${fitAx.selectedOptions[0].text}.`, 'ok'); } } }, 'm')));
+  insp.append(el('div', { class:'btns' },
+    el('button', { on:{ click:() => { m.rotY = ((m.rotY + 90 + 180) % 360) - 180; applyModelTransform(m); refreshInspectorValues(); } } }, 'Turn 90°'),
+    el('button', { on:{ click:() => { m.rotX = m.rotX === -90 ? 0 : -90; m.rotZ = 0; applyModelTransform(m); m.pos[1] -= new THREE.Box3().setFromObject(m.rt.g).min.y; applyModelTransform(m); refreshInspectorValues(); toast('Stood the model up (Z-up to Y-up). Click again or set Rotation X to 0 to undo.'); } } }, 'Stand up (Z-up)'),
+    el('button', { on:{ click:() => { m.pos[1] -= new THREE.Box3().setFromObject(m.rt.g).min.y; applyModelTransform(m); refreshInspectorValues(); } } }, 'Drop to floor'),
+    el('button', { on:{ click:() => { const b = new THREE.Box3().setFromObject(m.rt.g); m.pos[2] += (-HD + 1) - b.min.z; m.pos[0] = 0; applyModelTransform(m); refreshInspectorValues(); } } }, 'Move to stage end'),
+    el('button', { on:{ click:() => { m.rotX = m.rotY = m.rotZ = 0; m.scale = [1,1,1]; applyModelTransform(m); renderInspector(); } } }, 'Reset rotation & scale')));
+
+  insp.append(el('h3', {}, `Textures · ${m.rt.mats.length} surface${m.rt.mats.length===1?'':'s'}`));
+  insp.append(el('p', { class:'note' }, 'Put a JPEG/PNG image or an MP4 video on any surface, for example the LED screens in your stage. Click Pick surface, then click the screen in the 3D view.'));
+  insp.append(el('div', { class:'btns' },
+    el('button', { class: pickSurface===m.id ? 'on' : 'primary', on:{ click:() => setPickSurface(pickSurface===m.id ? null : m.id) } }, 'Pick surface'),
+    el('button', { on:{ click:() => chooseTex(m, 'all', 'image') } }, 'Image on all'),
+    el('button', { on:{ click:() => chooseTex(m, 'all', 'video') } }, 'Video on all')));
+  const list = el('div', { class:'mats' });
+  m.rt.mats.forEach((mt, i) => {
+    const t = texFor(m, i);
+    list.append(el('div', { class:'matrow' + (m.rt.selMat===i ? ' sel' : '') },
+      el('span', { class:'nm', title:matName(m,i) }, matName(m, i)),
+      el('span', { class:'st' + (t ? ' on' : '') }, t ? (t.kind==='video' ? 'video' : 'image') : (mt.map ? 'own' : '—')),
+      el('button', { title:'Put a JPEG or PNG on this surface', on:{ click:() => chooseTex(m, i, 'image') } }, 'Image'),
+      el('button', { title:'Put an MP4 video on this surface', on:{ click:() => chooseTex(m, i, 'video') } }, 'Video'),
+      t ? el('button', { title:'Back to the original texture', on:{ click:() => { clearTex(m, t.mat); renderInspector(); markDirty(); } } }, '×') : null));
+  });
+  insp.append(list);
+  const sel = texFor(m, m.rt.selMat);
+  if (sel){ insp.append(el('div', { class:'row' }, el('label', { for:'md_rep' }, 'Repeat'), el('input', { type:'number', id:'md_rep', step:0.5, min:0.1, value:sel.rx||1, on:{ change:e => { sel.rx = sel.ry = +e.target.value || 1; sel.tex.repeat.set(sel.rx, sel.ry); markDirty(); } } }))); }
+  if ((m.tex||[]).some(t => t.kind==='video')) insp.append(el('div', { class:'btns' },
+    el('button', { on:{ click:() => m.tex.forEach(t => t.tex && t.tex.userData.video && t.tex.userData.video.play()) } }, 'Play videos'),
+    el('button', { on:{ click:() => m.tex.forEach(t => t.tex && t.tex.userData.video && t.tex.userData.video.pause()) } }, 'Pause videos'),
+    el('button', { on:{ click:() => m.tex.forEach(t => { const v = t.tex && t.tex.userData.video; if (v){ v.currentTime = 0; v.play(); } }) } }, 'Restart')));
+
+  insp.append(el('h3', {}, 'Display'));
   insp.append(fieldRow({ k:'selfLit', l:'Self-lit textures', t:'bool' }, m, (k, v) => { m.selfLit = v; applySelfLit(m); markDirty(); }, 'md'));
   insp.append(fieldRow({ k:'visible', l:'Visible', t:'bool' }, m, (k, v) => { m.visible = v; m.rt.g.visible = v; markDirty(); }, 'md'));
-  insp.append(el('p', { class:'note' }, 'Self-lit makes textured surfaces glow in Show mode, so LED screens and signs in your model read as lit.'));
+  insp.append(el('p', { class:'note' }, 'Self-lit makes textured surfaces glow in Show mode, so screens and signs read as lit.'));
   insp.append(el('div', { class:'btns' },
-    el('button', { on:{ click:() => tc.setMode('translate') } }, 'Move (T)'),
-    el('button', { on:{ click:() => tc.setMode('rotate') } }, 'Rotate (R)'),
-    el('button', { on:{ click:() => { m.rotY = ((m.rotY + 90 + 180) % 360) - 180; m.rt.g.rotation.y = m.rotY*DEG; renderInspector(); markDirty(); } } }, 'Rotate 90°'),
-    el('button', { on:{ click:() => { m.pos[1] = 0; m.rt.g.position.y = 0; renderInspector(); markDirty(); } } }, 'Drop to floor'),
-    el('button', { on:{ click:() => { const b = new THREE.Box3().setFromObject(m.rt.g); m.pos[2] += (-HD + 1) - b.min.z; m.pos[0] = 0; m.rt.g.position.fromArray(m.pos); renderInspector(); markDirty(); } } }, 'Move to stage end'),
+    el('button', { on:{ click:() => duplicateModel(m) } }, 'Duplicate'),
+    el('button', { on:{ click:() => $('#fModel').click() } }, 'Add another model'),
     el('button', { class:'danger', on:{ click:() => removeModel(m) } }, 'Delete')));
 }
 function refreshInspectorValues(){
@@ -1161,8 +1314,11 @@ function refreshInspectorValues(){
   const p = selected.kind==='dev' ? 'dv_pos' : 'md_pos';
   if (arr) ['X','Y','Z'].forEach((a,i) => { const e = document.getElementById(`${p}_${a}`); if (e && document.activeElement!==e) e.value = (+arr[i]).toFixed(2); });
   if (selected.kind==='dev'){ const d = getDev(selected.id); if (!d) return;
-    for (const k of ['pan','rotY']){ const e = document.getElementById('dv_'+k); if (e && document.activeElement!==e){ e.value = d.p[k]; const v = e.parentElement.querySelector('.v'); if (v) v.textContent = d.p[k]; } } }
-  if (selected.kind==='model'){ const m = getModel(selected.id); const e = document.getElementById('md_rotY'); if (e){ e.value = m.rotY; e.parentElement.querySelector('.v').textContent = m.rotY; } }
+    for (const k of ['pan','tilt','focal','rotY']){ const e = document.getElementById('dv_'+k); if (e && document.activeElement!==e){ e.value = d.p[k]; const v = e.parentElement.querySelector('.v'); if (v) v.textContent = d.p[k]; } } }
+  if (selected.kind==='model'){ const m = getModel(selected.id); if (!m) return;
+    [m.rotX, m.rotY, m.rotZ].forEach((v,i) => { const e = document.getElementById('md_rot_' + 'XYZ'[i]); if (e && document.activeElement!==e) e.value = (+v).toFixed(0); });
+    m.scale.forEach((v,i) => { const e = document.getElementById('md_scl_' + 'XYZ'[i]); if (e && document.activeElement!==e) e.value = (+v).toFixed(3); });
+    const d = $('#md_dims'); if (d){ d.innerHTML = ''; d.append(...modelDims(m)); } }
 }
 function copyLook(src){
   const keys = ['on','intensity','color','color2','effect','pattern','angle','speed','rate','spread'];
@@ -1189,12 +1345,29 @@ function duplicateSel(){
   select({ kind:'dev', id:n.id }); refreshCamBar(); markDirty();
 }
 
+function camFromView(dev){
+  if (planMode) setPlan(false);
+  const pos = camera.position, dir = controls.target.clone().sub(pos);
+  const hf = 2*Math.atan(Math.tan(camera.fov*DEG/2) * camera.aspect);
+  let d = dev;
+  if (!d){ d = addDevice('cam_tripod', V3(pos.x, 0, pos.z), { name:`CAM ${camDevices().length+1} · From view` }); }
+  if (d.type==='cam_jib'){ d.type = 'cam_tripod'; d.p = { ...TYPE.cam_tripod.d, ...d.p }; rebuild(d); }
+  d.pos = [pos.x, 0, pos.z]; d.rt.g.position.fromArray(d.pos);
+  d.p.height = +clamp(pos.y, 0.3, 40).toFixed(2);
+  d.p.pan = +(Math.atan2(-dir.x, -dir.z)/DEG).toFixed(1); d.p.tilt = +clamp(Math.atan2(dir.y, Math.hypot(dir.x, dir.z))/DEG, -80, 60).toFixed(1);
+  d.p.focal = Math.round(clamp(18/Math.tan(hf/2), 8, 400));
+  refreshCamBar(); markDirty();
+  if (!dev){ select({ kind:'dev', id:d.id }); toast(`Added ${d.name} at your current view. Adjust it in the inspector or press ${camDevices().indexOf(d)+1} to take it.`, 'ok'); }
+  return d;
+}
+
 /* ---------- camera bus ---------- */
 function refreshCamBar(){
   const bar = $('#cambar'); bar.innerHTML = '';
   bar.append(el('span', { class:'lbl' }, 'Cameras'));
   bar.append(el('button', { class: S.onAir ? '' : 'on', on:{ click:() => setOnAir(null) } }, el('span', { class:'kbd' }, '0'), 'Free view'));
   camDevices().forEach((d,i) => bar.append(el('button', { class: S.onAir===d.id ? 'air' : '', title:'Take on air', on:{ click:() => setOnAir(S.onAir===d.id?null:d.id) } }, el('span', { class:'kbd' }, i<9?String(i+1):'·'), d.name)));
+  bar.append(el('button', { title:'Add a camera exactly where your 3D view is now', on:{ click:() => camFromView(null) } }, '+ Camera from this view'));
   bar.append(el('span', { class:'sp' }));
   bar.append(el('button', { id:'bSeat', class: seatMode ? 'on' : '', on:{ click:() => seatMode ? exitSeat(true) : enterSeat() } }, el('span', { class:'kbd' }, 'V'), 'Seat view'));
   bar.append(el('button', { id:'bPlan', class: planMode ? 'on' : '', on:{ click:() => setPlan(!planMode) } }, '2D plan'));
@@ -1204,7 +1377,7 @@ function setOnAir(id){
   S.onAir = id; exitSeat(false);
   if (id && planMode) setPlan(false);
   controls.enabled = !id; tc.enabled = !id; if (id) tc.detach();
-  $('#onair').hidden = !id; if (id) $('#onair').textContent = 'ON AIR · ' + getDev(id).name;
+  $('#onair').hidden = !id; if (id) $('#onair').textContent = 'ON AIR · ' + getDev(id).name + '  ·  drag to aim, scroll to zoom';
   refreshCamBar(); if (selected && selected.kind==='dev') renderInspector();
 }
 
@@ -1401,13 +1574,14 @@ const keys = {};
 addEventListener('keydown', e => {
   const tag = (e.target.tagName||'').toLowerCase(); if (tag==='input' || tag==='select' || tag==='textarea') return;
   keys[e.code] = true;
-  if (e.key==='Escape'){ if (placing) setPlacing(null); else if (seatMode) exitSeat(true); else if (S.onAir) setOnAir(null); else select(null); }
+  if (e.key==='Escape'){ if (pickSurface) setPickSurface(null); else if (placing) setPlacing(null); else if (seatMode) exitSeat(true); else if (S.onAir) setOnAir(null); else select(null); }
   else if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey){ const c = camDevices()[+e.key-1]; if (c) setOnAir(c.id); }
   else if (e.key==='0') setOnAir(null);
   else if (e.key==='v' || e.key==='V'){ seatMode ? exitSeat(true) : enterSeat(); }
   else if (e.key==='g' || e.key==='G') goCue(PB.idx + 1);
   else if (e.key==='t' || e.key==='T') tc.setMode('translate');
-  else if (e.key==='r' || e.key==='R') tc.setMode('rotate');
+  else if (e.key==='r' || e.key==='R') { tc.setMode('rotate'); if (selected && selected.kind==='model') renderInspector(); }
+  else if ((e.key==='y' || e.key==='Y') && selected && selected.kind==='model') { tc.setMode('scale'); renderInspector(); }
   else if (e.key==='Delete' || e.key==='Backspace') deleteSel();
   else if ((e.ctrlKey||e.metaKey) && e.key==='d'){ e.preventDefault(); duplicateSel(); }
 });
@@ -1443,17 +1617,18 @@ function serialize(withFiles){
     nextId:S.nextId,
     devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, p:d.p })),
     cues:S.cues,
-    models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotY:m.rotY,
-      files: await Promise.all((m.files||[]).map(async f => ({ name:f.name, data:b64(await f.arrayBuffer()) }))) }))) : S.models.map(m => ({ id:m.id, name:m.name }))
+    models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1],
+      files: await Promise.all((m.files||[]).map(async f => ({ name:f.name, data:b64(await f.arrayBuffer()) }))),
+      tex: await Promise.all((m.tex||[]).map(async t => ({ mat:t.mat, kind:t.kind, name:t.name, rx:t.rx||1, ry:t.ry||1, data:b64(await t.file.arrayBuffer()) }))) }))) : S.models.map(m => ({ id:m.id, name:m.name }))
   }))();
 }
 $('#bSave').onclick = async () => { toast('Packing project…'); const j = await serialize(true); await saveFile(`${slug()}-project.json`, JSON.stringify(j)); };
 async function openProject(file){
   try { const j = JSON.parse(await file.text()); if (j.app!=='esports-arena-planner') throw new Error('This file isn\'t an Arena Planner project.');
-    loadProject(j, true); toast(`Opened ${file.name}.`, 'ok'); }
+    await loadProject(j, true); toast(`Opened ${file.name}.`, 'ok'); }
   catch(e){ toast(`Couldn't open ${file.name}. ${e.message}`, 'err'); }
 }
-function loadProject(j, withModels){
+async function loadProject(j, withModels){
   clearRig(); S.models.slice().forEach(m => m.rt && modelGroup.remove(m.rt.g)); S.models = [];
   for (let i=placeTargets.length-1;i>=0;i--) if (placeTargets[i].userData.modelId) placeTargets.splice(i,1);
   Object.assign(S, j.settings || {}); S.nextId = j.nextId || 1;
@@ -1461,8 +1636,9 @@ function loadProject(j, withModels){
   S.cues = j.cues || [];
   syncTopUI(); setMode(S.mode); buildStands(); applyVenue(); refreshCamBar(); renderCues(); select(null);
   if (withModels) for (const m of j.models || []){ if (!m.files || !m.files.length) continue;
-    const files = m.files.map(f => new File([unb64(f.data)], f.name)); const rec = { id:m.id, name:m.name, units:m.units||'auto', selfLit:m.selfLit!==false, visible:m.visible!==false, pos:m.pos, rotY:m.rotY||0 };
-    S.models.push(rec); importFiles(files, rec); }
+    const files = m.files.map(f => new File([unb64(f.data)], f.name)); const rec = { id:m.id, name:m.name, units:m.units||'auto', selfLit:m.selfLit!==false, visible:m.visible!==false, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1],
+      tex:(m.tex||[]).map(t => ({ mat:t.mat, kind:t.kind, name:t.name, rx:t.rx, ry:t.ry, file:new File([unb64(t.data)], t.name) })) };
+    S.models.push(rec); await importFiles(files, rec); }
   else if ((j.models||[]).length) toast(`Your last session had ${j.models.length} imported model${j.models.length>1?'s':''}. Models are only kept in saved project files: use Open to load yours, or import the model again.`, 'info', 9000);
 }
 $('#bShot').onclick = () => { renderFrame(); canvas.toBlob(b => saveFile(`${slug()}-${S.onAir ? getDev(S.onAir).name.replace(/\W+/g,'-').toLowerCase() : 'view'}.png`, b), 'image/png'); };
@@ -1473,7 +1649,7 @@ $('#bKit').onclick = () => {
     else if (T.kind==='camera') det = `${p.focal} mm` + (d.type==='cam_jib' ? `, ${p.arm} m arm` : `, lens ${p.height} m`);
     else det = `${p.length} m`;
     rows.push([T.kind, T.label, d.name, d.pos[0].toFixed(2), d.pos[1].toFixed(2), d.pos[2].toFixed(2), d.mount||'', det]); }
-  for (const m of S.models) rows.push(['model','3D model',m.name, ...m.pos.map(v=>(+v).toFixed(2)), '', m.rt ? `${m.rt.size.x.toFixed(1)} x ${m.rt.size.z.toFixed(1)} x ${m.rt.size.y.toFixed(1)} m` : '']);
+  for (const m of S.models) rows.push(['model','3D model',m.name, ...m.pos.map(v=>(+v).toFixed(2)), '', m.rt ? (s => `${s.x.toFixed(1)} x ${s.z.toFixed(1)} x ${s.y.toFixed(1)} m`)(modelSize(m)) + ((m.tex||[]).length ? `; textures: ${m.tex.map(t=>t.name).join(' / ')}` : '') : '']);
   const counts = {}; S.devices.forEach(d => counts[TYPE[d.type].label] = (counts[TYPE[d.type].label]||0)+1);
   rows.push([]); rows.push(['Totals']); for (const [k,v] of Object.entries(counts)) rows.push([k, v]);
   const csv = rows.map(r => r.map(c => /[",\n]/.test(String(c)) ? `"${String(c).replace(/"/g,'""')}"` : c).join(',')).join('\n');
@@ -1590,5 +1766,6 @@ if (!restored){ exampleRig(); syncTopUI(); }
 refreshCamBar(); renderCues(); renderInspector();
 if (restored) toast('Restored your last session from this browser.', 'ok');
 document.fonts && document.fonts.ready.then(() => { floorLabel.userData.redraw && floorLabel.userData.redraw(); });
+window.__planner = { S };
 loop();
 </script>

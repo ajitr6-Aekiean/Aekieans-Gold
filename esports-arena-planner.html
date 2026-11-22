@@ -268,7 +268,7 @@ function toast(msg, kind='info', ms){
 const S = {
   eventName:'APEX ARENA CUP 2026', teamA:'NOVA', teamB:'VORTEX',
   mode:'show', dimmer:1, haze:0.6, glow:0.7, behind:false, placeholder:true,
-  devices:[], models:[], cues:[], nextId:1, onAir:null
+  devices:[], models:[], cues:[], gobos:[], nextId:1, onAir:null
 };
 let selected = null;     // {kind:'dev'|'model'|'cue', id}
 let placing = null;      // type key
@@ -490,7 +490,7 @@ function buildStands(){
 /* ---------- device types ---------- */
 const TYPE = {
   moving:{ label:'Moving Head', kind:'light', real:true, base:340, pri:2, sub:'Beam, sweeps, ballyhoo',
-    d:{ on:true,intensity:1,color:'#4aa8ff',angle:7,pan:0,tilt:25,effect:'none',speed:1,phase:0 },
+    d:{ on:true,intensity:1,color:'#4aa8ff',angle:7,pan:0,tilt:25,effect:'none',speed:1,phase:0,gobo:'open',goboRot:0,goboSpin:0,goboFlip:false },
     effects:['none','sweep','circle','ballyhoo','strobe','colour cycle'] },
   wash:{ label:'LED Wash', kind:'light', real:true, base:300, pri:1, sub:'Soft wide colour',
     d:{ on:true,intensity:1,color:'#7a3cff',angle:38,pan:0,tilt:20,effect:'none',speed:1,phase:0 },
@@ -527,6 +527,7 @@ function schema(type){
     else if (type==='laser') f.push({k:'beams',l:'Beams',t:'range',min:1,max:24,step:1},{k:'spread',l:'Spread °',t:'range',min:2,max:120,step:1},{k:'pattern',l:'Pattern',t:'select',o:T.patterns});
     else f.push({k:'effect',l:'Effect',t:'select',o:T.effects},{k:'angle',l:type==='strobe'?'Spread °':'Beam angle °',t:'range',min:type==='moving'?2:8,max:type==='moving'?40:110,step:1});
     if (type==='strobe') f.push({k:'rate',l:'Flash rate Hz',t:'range',min:.5,max:25,step:.5});
+    if (type==='moving') f.push({k:'gobo',l:'Gobo',t:'gobo'},{k:'goboRot',l:'Gobo angle °',t:'range',min:-180,max:180,step:1},{k:'goboSpin',l:'Gobo spin',t:'range',min:-2,max:2,step:.05},{k:'goboFlip',l:'Mirror gobo',t:'bool'});
     if (type==='toner') f.push({k:'cells',l:'Cells',t:'select',o:[2,4,8]});
     f.push({k:'speed',l:'Speed',t:'range',min:.1,max:3,step:.05},{k:'phase',l:'Phase',t:'range',min:0,max:1,step:.01},
       {k:'pan',l:'Pan °',t:'range',min:-180,max:180,step:1},{k:'tilt',l:'Tilt °',t:'range',min:0,max:180,step:1});
@@ -547,16 +548,128 @@ function schema(type){
 /* ---------- shared materials / geometry ---------- */
 const bodyMat = new THREE.MeshStandardMaterial({ color:0x2a2f37, roughness:.45, metalness:.5 });
 const trussMat = new THREE.MeshStandardMaterial({ color:0xa4adb8, roughness:.35, metalness:.85 });
-const beamVS = `varying float vF; varying vec3 vN; varying vec3 vV;
-void main(){ vF = -position.y; vec4 wp = modelMatrix*vec4(position,1.0); vN = normalize(mat3(modelMatrix)*normal); vV = normalize(cameraPosition - wp.xyz); gl_Position = projectionMatrix*viewMatrix*wp; }`;
-const beamFS = `uniform vec3 uColor; uniform float uAlpha; varying float vF; varying vec3 vN; varying vec3 vV;
-void main(){ float f = clamp(vF,0.0,1.0); float e = pow(abs(dot(normalize(vN), normalize(vV))), 1.4); float a = uAlpha*(1.0-f)*(1.0-f*0.4)*e; gl_FragColor = vec4(uColor, a); }`;
-const coneGeo = new THREE.ConeGeometry(1, 1, 28, 1, true); coneGeo.translate(0, -0.5, 0);
+// Volumetric beam: each pixel ray-marches through the cone, so beams have a bright core, soft edges,
+// fade with distance, drift through the haze and carry the gobo pattern.
+const beamVS = `varying vec3 vWorld;
+void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vWorld = wp.xyz; gl_Position = projectionMatrix*viewMatrix*wp; }`;
+const beamFS = `uniform vec3 uColor; uniform float uAlpha; uniform mat4 uInv; uniform mat4 uModel; uniform vec3 uScale; uniform float uTime;
+uniform sampler2D uGobo; uniform float uUseGobo; uniform float uGoboRot; uniform float uSoft; uniform int uSteps; uniform float uHaze;
+varying vec3 vWorld;
+float h31(vec3 p){ p = fract(p*0.3183099 + 0.1); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+float vnoise(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+  return mix(mix(mix(h31(i), h31(i+vec3(1,0,0)), f.x), mix(h31(i+vec3(0,1,0)), h31(i+vec3(1,1,0)), f.x), f.y),
+             mix(mix(h31(i+vec3(0,0,1)), h31(i+vec3(1,0,1)), f.x), mix(h31(i+vec3(0,1,1)), h31(i+vec3(1,1,1)), f.x), f.y), f.z); }
+void main(){
+  vec3 ro = (uInv*vec4(cameraPosition,1.0)).xyz, re = (uInv*vec4(vWorld,1.0)).xyz, rd = re - ro;
+  float t0 = 0.0, t1 = 1.0;
+  if (abs(rd.y) > 1e-6){ float ta = -ro.y/rd.y, tb = (-1.0-ro.y)/rd.y; t0 = max(t0, min(ta,tb)); t1 = min(t1, max(ta,tb)); }
+  if (t1 <= t0) discard;
+  float worldLen = length(mat3(uModel)*rd);
+  float dt = (t1-t0)/float(uSteps); float jit = 0.5 + (fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5)*0.35;
+  float acc = 0.0; float ca = cos(uGoboRot), sa = sin(uGoboRot);
+  for (int i=0; i<64; i++){
+    if (i >= uSteps) break;
+    vec3 p = ro + rd*(t0 + (float(i)+jit)*dt);
+    float h = -p.y; if (h <= 0.0005) continue;
+    float r = length(p.xz)/h; if (r >= 1.0) continue;
+    float edge = 1.0 - smoothstep(1.0 - uSoft, 1.0, r);
+    float core = mix(1.0, 1.0 + 1.2*(1.0 - r*r), 0.45);
+    float fall = pow(1.0 - h, 1.6) * (0.55 + 0.45/(1.0 + h*6.0));
+    vec3 wp = p*uScale;
+    float n = vnoise(wp*0.22 + vec3(0.0, uTime*0.12, uTime*0.07))*0.7 + vnoise(wp*0.6 - vec3(uTime*0.1, 0.0, uTime*0.05))*0.3;
+    float haze = mix(1.0, 0.35 + n*1.3, uHaze);
+    float g = 1.0;
+    if (uUseGobo > 0.5){ vec2 q = p.xz/h; q = vec2(ca*q.x - sa*q.y, sa*q.x + ca*q.y); g = texture2D(uGobo, q*0.5 + 0.5).r; }
+    float width = 0.12 + h*uScale.x;
+    acc += edge*core*fall*haze*g/width;
+  }
+  acc *= dt*worldLen;
+  float v = (1.0 - exp(-acc*0.55))*uAlpha;
+  if (v < 0.001) discard;
+  gl_FragColor = vec4(uColor*v, 1.0);
+}`;
+const coneGeo = new THREE.ConeGeometry(1, 1, 40, 1, true); coneGeo.translate(0, -0.5, 0);
+const blackTex = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1); blackTex.needsUpdate = true;
+let beamSteps = 28;
 function beamMesh(){
-  const m = new THREE.Mesh(coneGeo, new THREE.ShaderMaterial({ vertexShader:beamVS, fragmentShader:beamFS,
-    uniforms:{ uColor:{value:new THREE.Color()}, uAlpha:{value:0} }, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide, fog:false }));
+  const u = { uColor:{value:new THREE.Color()}, uAlpha:{value:0}, uInv:{value:new THREE.Matrix4()}, uModel:{value:new THREE.Matrix4()}, uScale:{value:V3(1,1,1)},
+    uTime:{value:0}, uGobo:{value:blackTex}, uUseGobo:{value:0}, uGoboRot:{value:0}, uSoft:{value:0.35}, uSteps:{value:28}, uHaze:{value:0.6} };
+  const m = new THREE.Mesh(coneGeo, new THREE.ShaderMaterial({ vertexShader:beamVS, fragmentShader:beamFS, uniforms:u,
+    transparent:true, depthWrite:false, blending:THREE.CustomBlending, blendSrc:THREE.OneFactor, blendDst:THREE.OneFactor, blendEquation:THREE.AddEquation, side:THREE.BackSide, fog:false }));
+  m.onBeforeRender = () => { u.uModel.value.copy(m.matrixWorld); u.uInv.value.copy(m.matrixWorld).invert(); u.uSteps.value = beamSteps; };
   m.raycast = ()=>{}; m.frustumCulled = false; m.layers.set(2); return m;
 }
+// lens glow (the bright hotspot you see looking into a fixture)
+const glowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64,64,0,64,64,64); gr.addColorStop(0,'rgba(255,255,255,1)'); gr.addColorStop(.12,'rgba(255,255,255,.85)'); gr.addColorStop(.3,'rgba(255,255,255,.25)'); gr.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0,0,128,128); const t = new THREE.CanvasTexture(c); return t; })();
+function glowSprite(){ const s = new THREE.Sprite(new THREE.SpriteMaterial({ map:glowTex, color:0xffffff, blending:THREE.AdditiveBlending, depthWrite:false, transparent:true, fog:false }));
+  s.layers.set(2); s.raycast = ()=>{}; return s; }
+
+/* ---------- gobos ---------- */
+const GOBO_BUILTIN = [['open','Open (no gobo)'],['dots','Dots'],['star','Star'],['breakup','Break-up'],['rings','Rings'],['prism','Tri-prism'],['nusta','nusta logo']];
+const goboCache = new Map();
+function goboCanvas(){ const c = document.createElement('canvas'); c.width = c.height = 256; return c; }
+function finishGobo(c, blur=1){ // circular aperture, soft focus
+  const o = goboCanvas(), g = o.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0,0,256,256);
+  g.save(); g.beginPath(); g.arc(128,128,122,0,Math.PI*2); g.clip(); g.filter = `blur(${blur}px)`; g.drawImage(c,0,0); g.restore();
+  const t = new THREE.CanvasTexture(o); t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; return t;
+}
+function drawBuiltinGobo(id){
+  const c = goboCanvas(), g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0,0,256,256); g.fillStyle = '#fff';
+  const dot = (x,y,r) => { g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill(); };
+  switch(id){
+    case 'dots': dot(128,128,22); for (let i=0;i<6;i++){ const a = i/6*Math.PI*2; dot(128+Math.cos(a)*72,128+Math.sin(a)*72,20); } break;
+    case 'star': g.beginPath(); for (let i=0;i<10;i++){ const a = i/10*Math.PI*2 - Math.PI/2, r = i%2 ? 46 : 118; g.lineTo(128+Math.cos(a)*r,128+Math.sin(a)*r); } g.fill(); break;
+    case 'breakup': { let s = 7; const rnd = () => (s = (s*9301+49297)%233280)/233280; g.fillRect(0,0,256,256); g.fillStyle = '#000';
+      for (let i=0;i<40;i++) dot(rnd()*256, rnd()*256, 8+rnd()*26); break; }
+    case 'rings': for (let r=120;r>0;r-=28){ g.fillStyle = (r/28|0)%2 ? '#fff' : '#000'; dot(128,128,r); } break;
+    case 'prism': for (let i=0;i<3;i++){ const a = i/3*Math.PI*2 - Math.PI/2; dot(128+Math.cos(a)*48,128+Math.sin(a)*48,58); } break;
+    case 'nusta': { const img = document.querySelector('.brand img'); if (img && img.complete){ const w = 200, h = w*img.naturalHeight/img.naturalWidth; g.drawImage(img, 128-w/2, 128-h/2, w, h);
+        const d = g.getImageData(0,0,256,256); for (let i=0;i<d.data.length;i+=4){ const a = d.data[i+3]/255; const v = Math.max(d.data[i],d.data[i+1],d.data[i+2])*a; d.data[i]=d.data[i+1]=d.data[i+2]=v>40?255:0; d.data[i+3]=255; } g.putImageData(d,0,0); } break; }
+    default: g.fillRect(0,0,256,256);
+  }
+  return finishGobo(c, id==='breakup' ? 3 : 1);
+}
+function goboFromImage(img){ // logo -> gobo mask: transparent PNGs use the logo shape, JPGs use brightness (white background auto-inverted)
+  const c = goboCanvas(), g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0,0,256,256);
+  const tmp = goboCanvas(), tg = tmp.getContext('2d'); const sc = Math.min(180/img.width, 180/img.height); const w = img.width*sc, h = img.height*sc;
+  tg.drawImage(img, 128-w/2, 128-h/2, w, h); const d = tg.getImageData(0,0,256,256);
+  let hasAlpha = false; for (let i=3;i<d.data.length;i+=4) if (d.data[i] < 250 && d.data[i] > 0 || (d.data[i]===0)) { hasAlpha = true; break; }
+  const lum = i => (d.data[i]*0.3 + d.data[i+1]*0.59 + d.data[i+2]*0.11);
+  const cx = Math.round(128-w/2+2), cy = Math.round(128-h/2+2); const ci = (cy*256+cx)*4; const brightBg = !hasAlpha && lum(ci) > 128;
+  const opaqueOnly = (() => { let n = 0, t = 0; for (let i=3;i<d.data.length;i+=4){ if (d.data[i] > 0){ t++; if (d.data[i] > 250) n++; } } return n === t; })();
+  const out = g.getImageData(0,0,256,256);
+  for (let i=0;i<d.data.length;i+=4){
+    const a = d.data[i+3]/255; let v;
+    if (!opaqueOnly) v = a*255; else { v = lum(i); if (brightBg) v = 255 - v; v *= a; }
+    v = v > 110 ? 255 : 0; out.data[i]=out.data[i+1]=out.data[i+2]=v; out.data[i+3]=255;
+  }
+  g.putImageData(out,0,0); return finishGobo(c, 0.8);
+}
+function goboTex(id){
+  if (!id || id==='open') return null;
+  if (goboCache.has(id)) return goboCache.get(id);
+  const custom = (S.gobos||[]).find(x => x.id===id);
+  if (custom){ const img = new Image(); goboCache.set(id, null); img.onload = () => { goboCache.set(id, goboFromImage(img)); }; img.src = custom.data; return null; }
+  if (GOBO_BUILTIN.some(x => x[0]===id)){ const t = drawBuiltinGobo(id); goboCache.set(id, t); return t; }
+  return null;
+}
+function goboOptions(){ return [...GOBO_BUILTIN.map(x => x[0]), ...(S.gobos||[]).map(x => x.id)]; }
+function goboLabel(id){ const b = GOBO_BUILTIN.find(x => x[0]===id); if (b) return b[1]; const c = (S.gobos||[]).find(x => x.id===id); return c ? c.name : id; }
+function uploadGobo(file, applyTo){
+  const r = new FileReader(); r.onload = () => {
+    const img = new Image(); img.onload = () => {
+      const c = document.createElement('canvas'); const sc = Math.min(1, 512/Math.max(img.width, img.height)); c.width = Math.round(img.width*sc); c.height = Math.round(img.height*sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const g = { id:'g' + (S.nextId++), name:file.name.replace(/\.[^.]+$/,'').slice(0,28), data:c.toDataURL('image/png') };
+      (S.gobos ||= []).push(g); goboCache.delete(g.id);
+      if (applyTo) applyTo.p.gobo = g.id;
+      toast(`Added gobo "${g.name}". It's now in the gobo list of every moving head.`, 'ok'); renderInspector(); markDirty();
+    }; img.onerror = () => toast(`Couldn't read ${file.name}. Use a PNG (transparent background works best) or JPG.`, 'err'); img.src = r.result;
+  }; r.readAsDataURL(file);
+}
+
 const laserGeo = new THREE.BoxGeometry(0.025, 1, 0.025); laserGeo.translate(0, -0.5, 0);
 
 /* light pool: only 16 real lights for speed */
@@ -712,6 +825,7 @@ function buildDevice(d){
     if (d.type!=='pyro'){
       buildFixture(d, rt, g, sgn, hung);
       if (T.real || d.type==='strobe'){ rt.beam = beamMesh(); scene.add(rt.beam); }
+      if (d.type!=='matrix'){ rt.glow = glowSprite(); scene.add(rt.glow); }
       if (d.type==='laser'){
         rt.lasers = []; rt.laserMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false });
         for (let i=0;i<(+d.p.beams||1);i++){ const b = new THREE.Mesh(laserGeo, rt.laserMat); b.raycast=()=>{}; b.frustumCulled=false; b.layers.set(2); scene.add(b); rt.lasers.push(b); }
@@ -769,7 +883,7 @@ function buildDevice(d){
 }
 function disposeDevice(d){
   if (!d.rt) return; const rt = d.rt; devGroup.remove(rt.g);
-  for (const o of [rt.beam, rt.camHead, rt.cam, rt.hcam, rt.helper, rt.arm, rt.cw]) if (o) scene.remove(o);
+  for (const o of [rt.beam, rt.glow, rt.camHead, rt.cam, rt.hcam, rt.helper, rt.arm, rt.cw]) if (o) scene.remove(o);
   if (rt.lasers) rt.lasers.forEach(b => scene.remove(b));
   d.rt = null;
 }
@@ -845,13 +959,32 @@ function updateLights(t, dt){
         c.copy(c1).lerp(c2, m).multiplyScalar(v*out*2.6); rt.pix.setColorAt(i, c); }
       rt.pix.instanceColor.needsUpdate = true;
     }
+    const viewCam = activeCam();
+    if (rt.glow){
+      const lensOff = d.type==='moving' ? .24 : d.type==='wash' ? .17 : d.type==='stadium' ? .12 : .1;
+      rt.glow.position.copy(hp).addScaledVector(dir, lensOff);
+      const toCam = tmpV.copy(viewCam.position).sub(rt.glow.position); const dist = toCam.length(); toCam.normalize();
+      const facing = Math.max(0, dir.dot(toCam));
+      const sz = { moving:.55, wash:.9, strobe:1.1, stadium:1.6, toner:1.2, laser:.15 }[d.type] || .6;
+      const k = out * (0.15 + 0.85*Math.pow(facing, 3));
+      rt.glow.scale.setScalar(sz * (0.6 + 1.4*k) * Math.min(1, 0.4 + dist/25));
+      rt.glow.material.color.copy(ev.col).lerp(new THREE.Color(1,1,1), 0.35).multiplyScalar(Math.min(2.5, k*2.2));
+      rt.glow.visible = k > 0.01 && S.mode!=='blackout';
+    }
     if (rt.beam){
       let L = d.type==='stadium' ? 120 : d.type==='strobe' ? 6 : d.type==='toner' ? 14 : 60;
       if (dir.y < -0.01) L = Math.min(L, hp.y / -dir.y); if (dir.y >= -0.01 && d.type!=='stadium') L = Math.min(L, 40);
+      if ((fxFrame + d.id) % 8 === 0 || rt.hitL === undefined){ ray.set(hp, dir); ray.far = L; const hit = ray.intersectObjects([...placeTargets.filter(o => o.visible !== false), stageGroup.visible ? stageGroup : null].filter(Boolean), true).find(h => h.distance > 0.4 && h.object.visible); rt.hitL = hit ? hit.distance : Infinity; ray.far = Infinity; }
+      L = Math.min(L, rt.hitL);
       const ang = clamp(+d.p.angle, 1, 120)*DEG/2; const r = Math.tan(ang)*L;
       rt.beam.position.copy(hp).addScaledVector(dir, d.type==='moving' ? 0.23 : d.type==='stadium' ? 0.12 : 0.17); rt.beam.quaternion.copy(tmpQ); rt.beam.scale.set(Math.max(r,0.01), Math.max(L,0.1), Math.max(r,0.01));
-      const wide = d.type==='wash'||d.type==='toner'||d.type==='strobe' ? 0.35 : d.type==='stadium' ? 0.2 : 1;
-      rt.beam.material.uniforms.uColor.value.copy(ev.col); rt.beam.material.uniforms.uAlpha.value = out*beamK*0.55*wide;
+      const wide = d.type==='wash'||d.type==='toner'||d.type==='strobe' ? 0.55 : d.type==='stadium' ? 0.35 : 1;
+      const U = rt.beam.material.uniforms;
+      U.uColor.value.copy(ev.col); U.uAlpha.value = out*beamK*2.2*wide; U.uTime.value = t; U.uHaze.value = S.haze;
+      U.uScale.value.copy(rt.beam.scale); U.uSoft.value = d.type==='moving' ? (d.p.gobo && d.p.gobo!=='open' ? 0.12 : 0.3) : 0.55;
+      const gt = d.type==='moving' ? goboTex(d.p.gobo) : null; rt.goboTex = gt;
+      U.uUseGobo.value = gt ? 1 : 0; U.uGobo.value = gt || blackTex;
+      rt.goboAngle = Math.PI + (+d.p.goboRot||0)*DEG + t*(+d.p.goboSpin||0)*Math.PI*0.5; U.uGoboRot.value = rt.goboAngle * (d.p.goboFlip ? -1 : 1);
       rt.beam.visible = out > 0.002 && beamK > 0;
     }
     if (rt.lasers){
@@ -871,15 +1004,19 @@ function updateLights(t, dt){
         b.position.copy(hp); b.quaternion.setFromUnitVectors(DOWN, bd); b.scale.set(1, L, 1); b.visible = out*lk > 0.003;
       });
     }
-    if (TYPE[d.type].real && out > 0.02) cand.push({ d, out, dir, hp, col:ev.col });
+    if (TYPE[d.type].real && out > 0.02) cand.push({ d, out, dir, hp, col:ev.col, q:tmpQ.clone() });
   }
   cand.sort((a,b) => TYPE[a.d.type].pri - TYPE[b.d.type].pri || a.d.id - b.d.id);
   for (let i=0;i<POOL;i++){
     const l = pool[i], c = cand[i];
-    if (!c){ l.intensity = 0; continue; }
+    if (!c){ l.intensity = 0; if (l.map) l.map = null; continue; }
     l.position.copy(c.hp); l.target.position.copy(c.hp).addScaledVector(c.dir, 10); l.target.updateMatrixWorld();
-    l.color.copy(c.col); l.angle = clamp((+c.d.p.angle)*DEG*0.6, 0.03, 1.3); l.penumbra = 0.5;
-    l.intensity = TYPE[c.d.type].base * c.out;
+    l.color.copy(c.col); const gt = c.d.rt.goboTex || null;
+    if (l.map !== gt){ l.map = gt; }
+    l.angle = gt ? clamp((+c.d.p.angle)*DEG*0.5, 0.02, 1.3) : clamp((+c.d.p.angle)*DEG*0.6, 0.03, 1.3); l.penumbra = gt ? 0.08 : 0.5;
+    if (gt){ const a = c.d.rt.goboAngle || 0; const ax = V3(1,0,0).applyQuaternion(c.q), az = V3(0,0,1).applyQuaternion(c.q);
+      l.shadow.camera.up.copy(az.multiplyScalar(Math.cos(a))).addScaledVector(ax, Math.sin(a) * (c.d.p.goboFlip ? -1 : 1)); }
+    l.intensity = TYPE[c.d.type].base * c.out * (gt ? 1.6 : 1);
   }
   realUsed = Math.min(POOL, cand.length); realWanted = cand.length;
 }
@@ -1327,6 +1464,7 @@ function fieldRow(f, obj, onChange, idp){
   if (f.t==='range'){ out = el('span', { class:'v' }, fmt(v, f.step)); input = el('input', { type:'range', id, min:f.min, max:f.max, step:f.step, value:v, on:{ input:e => { const nv = +e.target.value; out.textContent = fmt(nv, f.step); onChange(f.k, nv); } } }); }
   else if (f.t==='select'){ input = el('select', { id, on:{ change:e => onChange(f.k, isNaN(+e.target.value) ? e.target.value : +e.target.value) } }); for (const o of f.o) input.append(el('option', { value:o, selected: String(o)===String(v) }, String(o))); }
   else if (f.t==='color'){ input = el('input', { type:'color', id, value:v, on:{ input:e => onChange(f.k, e.target.value) } }); }
+  else if (f.t==='gobo'){ input = el('select', { id, on:{ change:e => onChange(f.k, e.target.value) } }); for (const o of goboOptions()) input.append(el('option', { value:o, selected:o===v }, goboLabel(o))); }
   else if (f.t==='bool'){ input = el('input', { type:'checkbox', id, checked:v!==false, on:{ change:e => onChange(f.k, e.target.checked) } }); }
   else { input = el('input', { type:'text', id, value:v, on:{ input:e => onChange(f.k, e.target.value) } }); }
   input.dataset.key = f.k;
@@ -1377,6 +1515,12 @@ function renderDevInspector(d){
   b.append(el('button', { on:{ click:duplicateSel } }, 'Duplicate'));
   b.append(el('button', { class:'danger', on:{ click:deleteSel } }, 'Delete'));
   insp.append(b);
+  if (d.type==='moving'){
+    insp.append(el('div', { class:'btns' },
+      el('button', { class:'primary', title:'Use your logo as a gobo', on:{ click:() => { const f = el('input', { type:'file', accept:'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp' }); f.onchange = () => f.files[0] && uploadGobo(f.files[0], d); f.click(); } } }, 'Upload logo gobo'),
+      el('button', { title:'Give every moving head this gobo', on:{ click:() => { let n = 0; for (const x of S.devices) if (x.type==='moving' && x!==d){ x.p.gobo = d.p.gobo; x.p.goboRot = d.p.goboRot; x.p.goboSpin = d.p.goboSpin; x.p.goboFlip = d.p.goboFlip; n++; } toast(`Set ${goboLabel(d.p.gobo)} on ${n} other moving heads.`, 'ok'); markDirty(); } } }, 'Gobo on all moving heads')));
+    insp.append(el('p', { class:'note' }, 'Gobos show in the beam and on the floor. A PNG with a transparent background works best for logos; a JPG with a white background is turned into a gobo automatically. Narrow the beam angle for a sharper logo.'));
+  }
   if (T.kind==='light' && d.type!=='pyro'){
     const b2 = el('div', { class:'btns' });
     b2.append(el('button', { on:{ click:() => { aimLight(d, STAGE_C); renderInspector(); markDirty(); } } }, 'Aim at stage'));
@@ -1507,7 +1651,7 @@ function refreshInspectorValues(){
     const d = $('#md_dims'); if (d){ d.innerHTML = ''; d.append(...modelDims(m)); } }
 }
 function copyLook(src){
-  const keys = ['on','intensity','color','color2','effect','pattern','angle','speed','rate','spread'];
+  const keys = ['on','intensity','color','color2','effect','pattern','angle','speed','rate','spread','gobo','goboRot','goboSpin','goboFlip'];
   let n = 0; for (const d of S.devices) if (d!==src && d.type===src.type){ for (const k of keys) if (k in src.p) d.p[k] = src.p[k]; n++; }
   toast(`Copied the look to ${n} other ${TYPE[src.type].label}${n===1?'':'s'}.`, 'ok'); markDirty();
 }
@@ -1658,12 +1802,13 @@ async function doRender(){
     renderer.setPixelRatio(1); composer.setPixelRatio(1); renderer.setSize(W*ss, H*ss, false); composer.setSize(W*ss, H*ss);
     bloom.resolution.set(W*ss/2, H*ss/2); pMat.uniforms.uScale.value = H*ss*0.9;
     cam.aspect = W/H; cam.updateProjectionMatrix();
+    beamSteps = 56;
     for (let i=0;i<3;i++){ setupEffects(cam, true); renderPass.camera = cam; bloom.strength = S.glow * (S.mode==='show' ? 1 : 0.25); hideOwnCam(true); composer.render(); hideOwnCam(false); }
     const out = document.createElement('canvas'); out.width = W; out.height = H; const g = out.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
     g.drawImage(canvas, 0, 0, W*ss, H*ss, 0, 0, W, H);
     lastBlob = await new Promise(r => out.toBlob(r, 'image/png'));
   } catch(e){ ok = false; console.error(e); toast(`The render failed (${e.message || e}). Try a smaller size or Draft quality.`, 'err'); }
-  finally { rendering = false; cam.aspect = prevAspect; cam.updateProjectionMatrix(); renderer.setPixelRatio(pr); composer.setPixelRatio(pr); resize(); $('#bRender') && ($('#bRender').disabled = false); }
+  finally { rendering = false; beamSteps = 28; cam.aspect = prevAspect; cam.updateProjectionMatrix(); renderer.setPixelRatio(pr); composer.setPixelRatio(pr); resize(); $('#bRender') && ($('#bRender').disabled = false); }
   if (!ok || !lastBlob) return;
   const secs = ((performance.now()-t0)/1000).toFixed(1);
   lastName = `${slug()}-${S.onAir ? getDev(S.onAir).name.replace(/\W+/g,'-').toLowerCase() : 'view'}-${W}x${H}.png`;
@@ -1743,8 +1888,8 @@ function exitSeat(back){
 }
 
 /* ---------- cues ---------- */
-const LOOK_NUM = ['intensity','angle','pan','tilt','speed','phase','rate','spread'];
-const LOOK_DISC = ['effect','pattern'];
+const LOOK_NUM = ['intensity','angle','pan','tilt','speed','phase','rate','spread','goboRot','goboSpin'];
+const LOOK_DISC = ['effect','pattern','gobo','goboFlip'];
 function captureLook(){
   const lights = {};
   for (const d of S.devices) if (TYPE[d.type].kind==='light' && d.type!=='pyro'){
@@ -1929,6 +2074,7 @@ function unb64(str){ const s = atob(str), u = new Uint8Array(s.length); for (let
 function serialize(withFiles){
   return (async () => ({
     app:'esports-arena-planner', version:1,
+    gobos:S.gobos||[],
     settings:{ eventName:S.eventName, teamA:S.teamA, teamB:S.teamB, mode:S.mode, dimmer:S.dimmer, haze:S.haze, glow:S.glow, behind:S.behind, placeholder:S.placeholder },
     nextId:S.nextId,
     devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, p:d.p })),
@@ -1947,7 +2093,7 @@ async function openProject(file){
 async function loadProject(j, withModels){
   clearRig(); S.models.slice().forEach(m => m.rt && modelGroup.remove(m.rt.g)); S.models = [];
   for (let i=placeTargets.length-1;i>=0;i--) if (placeTargets[i].userData.modelId) placeTargets.splice(i,1);
-  Object.assign(S, j.settings || {}); S.nextId = j.nextId || 1;
+  Object.assign(S, j.settings || {}); S.nextId = j.nextId || 1; S.gobos = j.gobos || []; goboCache.clear();
   for (const d of j.devices || []){ const T = TYPE[d.type]; if (!T) continue; const nd = { ...d, p:{ ...T.d, ...d.p } }; S.devices.push(nd); buildDevice(nd); }
   S.cues = j.cues || [];
   syncTopUI(); setMode(S.mode); buildStands(); applyVenue(); refreshCamBar(); renderCues(); select(null);
@@ -1979,7 +2125,7 @@ function exampleRig(){
   const tr = (x,y,z,L,r=0) => addDevice('truss', V3(x,y,z), { p:{ length:L, rotY:r } });
   tr(0, 11, SF-1, 34); tr(0, 12.5, -HD+8, 30); tr(-19, 11, -HD+9, 16, 90); tr(19, 11, -HD+9, 16, 90); tr(0, 13, -6, 40);
   const hang = (type, x, y, z, p={}) => addDevice(type, V3(x, y-0.45, z), { mount:'hung', p });
-  for (let i=0;i<10;i++){ const x = -15 + i*(30/9); hang('moving', x, 11, SF-1, { tilt:30, pan:0, color:'#3f9dff' }); }
+  for (let i=0;i<10;i++){ const x = -15 + i*(30/9); hang('moving', x, 11, SF-1, { tilt:30, pan:0, color:'#3f9dff', gobo: i%3===1 ? 'nusta' : i%3===2 ? 'breakup' : 'open', goboSpin: i%3===2 ? .3 : 0 }); }
   for (let i=0;i<6;i++){ const d = hang('wash', -12.5 + i*5, 12.5, -HD+8, { color:'#7a3cff' }); aimLight(d, V3(d.pos[0], DECK_H, -HD+10)); }
   hang('strobe', -16, 12.5, -HD+8); hang('strobe', 16, 12.5, -HD+8);
   for (const x of [-15,-5,5,15]){ const d = hang('moving', x, 13, -6, { color:'#ff5a3c' }); aimLight(d, V3(x*0.6, DECK_H, -HD+10)); }

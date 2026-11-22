@@ -1,0 +1,63 @@
+{
+  "name": "nusta-arena-planner",
+  "productName": "nusta Arena Planner",
+  "version": "1.0.0",
+  "description": "nusta Arena Planner: 3D esports event design, lighting, cameras and renders.",
+  "author": "nusta",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "prepare-app": "node scripts/build-app.js",
+    "start": "npm run prepare-app && electron .",
+    "dist": "npm run prepare-app && electron-builder --win nsis --x64",
+    "dist:linux": "bash scripts/make-installer.sh"
+  },
+  "devDependencies": {
+    "@fontsource/inter": "5.1.0",
+    "@fontsource/jetbrains-mono": "5.1.1",
+    "@fontsource/lexend": "5.1.1",
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "pe-library": "^1.0.1",
+    "resedit": "^2.0.2",
+    "three": "0.160.0"
+  },
+  "build": {
+    "appId": "com.nusta.arenaplanner",
+    "productName": "nusta Arena Planner",
+    "copyright": "© nusta",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "app/**/*",
+      "build/icon.png"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "nusta Arena Planner",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "nusta-Arena-Planner-Setup-${version}.exe"
+    },
+    "afterPack": "scripts/after-pack.js"
+  }
+}

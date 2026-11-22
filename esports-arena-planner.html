@@ -106,6 +106,16 @@ button.on .kbd,button.air .kbd{color:inherit;border-color:currentColor}
 .matrow .st{font-family:var(--f-mono);font-size:10px;color:var(--muted)}
 .matrow .st.on{color:var(--ok)}
 .matrow button{padding:3px 7px;font-size:11px}
+#rlabel{font-family:var(--f-mono);font-size:10.5px;background:rgba(5,7,10,.75);color:var(--fg);padding:3px 7px;border-radius:3px}
+#renderOut{position:absolute;inset:0;background:rgba(5,7,10,.92);display:flex;align-items:center;justify-content:center;padding:16px;z-index:5}
+.ro-box{display:flex;flex-direction:column;gap:10px;max-width:100%;max-height:100%;min-width:0}
+.ro-box img{max-width:100%;max-height:calc(100% - 50px);object-fit:contain;border:1px solid var(--line);background:#000;min-height:0}
+.ro-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.presets{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+.presets button{padding:4px 8px;font-size:11px}
+.matrow .nm{cursor:pointer}
+.bigbtn{width:100%;padding:11px;font-size:14px;font-family:var(--f-display);letter-spacing:.06em;text-transform:uppercase}
+#c.framed{box-shadow:0 0 0 1px var(--accent)}
 hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 @media (max-width:900px){
   body{overflow:auto}
@@ -126,6 +136,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 <div id="app">
   <header id="top">
     <div class="brand"><i></i>Arena Planner</div>
+    <div class="seg" role="tablist" aria-label="Workspace"><button id="tabDesign" class="on" role="tab">Design</button><button id="tabRender" role="tab">Render</button></div>
     <input id="eventName" type="text" aria-label="Event name" style="width:200px">
     <div class="seg" role="group" aria-label="Lighting mode">
       <button id="mShow" class="on">Show</button><button id="mWork">Work light</button><button id="mBlack">Blackout</button>
@@ -178,6 +189,8 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div id="preview" class="ov" hidden><span id="previewLbl">PREVIEW</span></div>
     <div id="fps" class="ov"></div>
     <div id="toasts" class="ov"></div>
+    <div id="rlabel" class="ov" hidden></div>
+    <div id="renderOut" hidden><div class="ro-box"><img id="roImg" alt="Rendered image"><div class="ro-bar"><span id="roInfo" class="mono"></span><span class="spacer"></span><button id="roSave" class="primary">Save PNG</button><button id="roAgain">Render again</button><button id="roClose">Close</button></div></div></div>
     <div id="drop" class="ov" hidden>Drop your stage model, textures, ZIP or folder</div>
   </main>
 
@@ -212,6 +225,12 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -259,6 +278,9 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+scene.environment = envTex;
 scene.background = new THREE.Color(0x05070a);
 scene.fog = new THREE.FogExp2(0x070a0f, 0.006);
 
@@ -285,7 +307,11 @@ tc.addEventListener('mouseUp', () => { refreshInspectorValues(); markDirty(); })
 const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
 const bloom = new UnrealBloomPass(new THREE.Vector2(512,512), 0.7, 0.55, 0.72);
-composer.addPass(renderPass); composer.addPass(bloom); composer.addPass(new OutputPass());
+const aoCam = new THREE.PerspectiveCamera();
+const gtao = new GTAOPass(scene, aoCam, 512, 512); gtao.enabled = false; gtao.blendIntensity = 1;
+const bokeh = new BokehPass(scene, aoCam, { focus:30, aperture:0.0004, maxblur:0.012 }); bokeh.enabled = false;
+const vignette = new ShaderPass(VignetteShader); vignette.uniforms.offset.value = 0.95; vignette.uniforms.darkness.value = 0.85; vignette.enabled = false;
+composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bokeh); composer.addPass(bloom); composer.addPass(vignette); composer.addPass(new OutputPass());
 
 const hemi = new THREE.HemisphereLight(0xcfd8ff, 0x20242c, 0.05); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 0); sun.position.set(30, 60, 40); scene.add(sun);
@@ -304,7 +330,7 @@ ground.rotation.x = -Math.PI/2; ground.position.y = -0.02; venue.add(ground); pl
   for (let j=0;j<=30;j++){ const z = -HD + j*10*FT; (j%5?minor:major).push(-HW,0.01,z, HW,0.01,z); }
   const mk = (arr,c,o) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr,3));
     return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color:c, transparent:true, opacity:o })); };
-  venue.add(mk(minor, 0x3a4658, 0.35)); venue.add(mk(major, 0x5a6a82, 0.55));
+  { const a = mk(minor, 0x3a4658, 0.35), b = mk(major, 0x5a6a82, 0.55); a.userData.guide = b.userData.guide = true; venue.add(a); venue.add(b); }
 }
 function labelSprite(text, w, size=64, color='#8fa0b8'){
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 128;
@@ -312,7 +338,7 @@ function labelSprite(text, w, size=64, color='#8fa0b8'){
   g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 512, 64);
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w/8), new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false, opacity:0.75 }));
-  m.rotation.x = -Math.PI/2; m.raycast = ()=>{}; m.userData.redraw = () => { g.clearRect(0,0,1024,128); g.fillText(text,512,64); tex.needsUpdate = true; };
+  m.rotation.x = -Math.PI/2; m.raycast = ()=>{}; m.userData.guide = true; m.userData.redraw = () => { g.clearRect(0,0,1024,128); g.fillText(text,512,64); tex.needsUpdate = true; };
   return m;
 }
 const floorLabel = labelSprite('ARENA FLOOR  ·  250 × 300 FT', 40); floorLabel.position.set(0, 0.03, 20); venue.add(floorLabel);
@@ -526,7 +552,7 @@ const coneGeo = new THREE.ConeGeometry(1, 1, 28, 1, true); coneGeo.translate(0, 
 function beamMesh(){
   const m = new THREE.Mesh(coneGeo, new THREE.ShaderMaterial({ vertexShader:beamVS, fragmentShader:beamFS,
     uniforms:{ uColor:{value:new THREE.Color()}, uAlpha:{value:0} }, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide, fog:false }));
-  m.raycast = ()=>{}; m.frustumCulled = false; return m;
+  m.raycast = ()=>{}; m.frustumCulled = false; m.layers.set(2); return m;
 }
 const laserGeo = new THREE.BoxGeometry(0.025, 1, 0.025); laserGeo.translate(0, -0.5, 0);
 
@@ -534,6 +560,140 @@ const laserGeo = new THREE.BoxGeometry(0.025, 1, 0.025); laserGeo.translate(0, -
 const POOL = 16, pool = [];
 for (let i=0;i<POOL;i++){ const l = new THREE.SpotLight(0xffffff, 0, 0, 0.3, 0.45, 2); scene.add(l); scene.add(l.target); pool.push(l); }
 const pyroLights = []; for (let i=0;i<4;i++){ const l = new THREE.PointLight(0xff8a30, 0, 40, 2); scene.add(l); pyroLights.push(l); }
+
+/* ---------- realistic fixture parts ---------- */
+const MT = {
+  housing: new THREE.MeshStandardMaterial({ color:0x15171a, roughness:.38, metalness:.6 }),
+  housing2: new THREE.MeshStandardMaterial({ color:0x26292e, roughness:.5, metalness:.45 }),
+  metal: new THREE.MeshStandardMaterial({ color:0xa3aab3, roughness:.25, metalness:1 }),
+  vent: new THREE.MeshStandardMaterial({ color:0x060708, roughness:.92, metalness:.1 }),
+  glass: new THREE.MeshStandardMaterial({ color:0x04060a, roughness:.03, metalness:.2 }),
+  reflector: new THREE.MeshStandardMaterial({ color:0xe2e6ec, roughness:.1, metalness:1, side:THREE.DoubleSide }),
+  rubber: new THREE.MeshStandardMaterial({ color:0x0c0c0d, roughness:.95 }),
+  display: new THREE.MeshBasicMaterial({ color:0x2a74ff }),
+  cam: new THREE.MeshStandardMaterial({ color:0x2b2e33, roughness:.55, metalness:.35 }),
+  camDark: new THREE.MeshStandardMaterial({ color:0x111214, roughness:.4, metalness:.5 }),
+};
+MT.glass.userData.refl = 1.8; MT.reflector.userData.refl = 1.5; MT.metal.userData.refl = 1.3;
+{ const cv = document.createElement('canvas'); cv.width = 64; cv.height = 16; const g = cv.getContext('2d'); g.fillStyle = '#e8b400'; g.fillRect(0,0,64,16); g.fillStyle = '#111';
+  for (let i=-2;i<8;i++){ g.beginPath(); g.moveTo(i*12,16); g.lineTo(i*12+6,16); g.lineTo(i*12+14,0); g.lineTo(i*12+8,0); g.fill(); }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; MT.hazard = new THREE.MeshStandardMaterial({ map:t, roughness:.6 }); }
+const GC = new Map(); const cg = (k, fn) => { if (!GC.has(k)) GC.set(k, fn()); return GC.get(k); };
+const RB = (w,h,d,r=.02) => new RoundedBoxGeometry(w,h,d,2,r);
+function mk3(geo, mat, x=0,y=0,z=0, rx=0,ry=0,rz=0){ const m = new THREE.Mesh(geo, mat); m.position.set(x,y,z); m.rotation.set(rx,ry,rz); return m; }
+const FIX = { // yokeY: base height; arm: half-width of yoke; pivot: head pivot above yoke bridge
+  moving:{ base:true, arm:.2, pivot:.2 }, wash:{ base:true, arm:.25, pivot:.22 }, strobe:{ arm:.4, pivot:.17 },
+  stadium:{ arm:.41, pivot:.42 }, toner:{ arm:0, pivot:0 }, matrix:{ arm:.37, pivot:.38 }, laser:{ arm:.22, pivot:.2 } };
+function lathe(key, pts, seg=32){ return cg(key, () => new THREE.LatheGeometry(pts.map(([r,y]) => new THREE.Vector2(r,y)), seg)); }
+function buildFixture(d, rt, g, sgn, hung){
+  const t = d.type, F = { ...FIX[t] };
+  let headW = .4, headD = .3, headH = .2;
+  if (t==='toner'){ const c = +d.p.cells||4; rt.tcols = c===8?4:2; rt.trows = c===2?1:2; headW = rt.tcols*.3+.08; headD = rt.trows*.3+.08; headH = .24; F.arm = headW/2 + .045; F.pivot = Math.max(headD, headH)/2 + .07; }
+  // mounting hardware
+  if (hung){
+    g.add(mk3(cg('clamp', () => RB(.08,.1,.1,.012)), MT.metal, 0, .05, 0));
+    g.add(mk3(cg('hook', () => new THREE.TorusGeometry(.055,.012,8,18,Math.PI)), MT.metal, 0, .1, 0, 0, Math.PI/2, 0));
+    g.add(mk3(cg('wing', () => new THREE.CylinderGeometry(.008,.008,.09,6)), MT.metal, .06, .07, 0, 0, 0, Math.PI/2));
+    const safety = mk3(cg('safety', () => new THREE.TorusGeometry(.09,.004,4,20)), MT.metal, -.12, .02, 0, 0, 0, 0); g.add(safety);
+  }
+  let yokeY = .02;
+  if (F.base){
+    const bw = t==='wash' ? .48 : .44;
+    g.add(mk3(cg('base'+t, () => RB(bw,.17,.36,.035)), MT.housing, 0, sgn*.085, 0));
+    g.add(mk3(cg('baseVent'+t, () => new THREE.PlaneGeometry(bw*.7,.07)), MT.vent, 0, sgn*.085, -.181, 0, Math.PI, 0));
+    g.add(mk3(cg('disp', () => new THREE.PlaneGeometry(.085,.045)), MT.display, .1, sgn*.09, .181));
+    for (const x of [-1,1]) g.add(mk3(cg('handle', () => new THREE.TorusGeometry(.06,.011,6,14,Math.PI)), MT.housing2, x*(bw/2+.003), sgn*.085, 0, 0, x*Math.PI/2, Math.PI/2));
+    if (!hung) for (const [x,z] of [[-1,-1],[1,-1],[-1,1],[1,1]]) g.add(mk3(cg('foot', () => new THREE.CylinderGeometry(.025,.03,.02,10)), MT.rubber, x*.17, .01, z*.13));
+    yokeY = .17;
+  } else if (!hung){
+    g.add(mk3(cg('plate'+t, () => RB(Math.max(.3, F.arm*1.6),.03,.32,.01)), MT.housing2, 0, .015, 0));
+    yokeY = .03;
+  }
+  const yoke = new THREE.Group(); yoke.position.y = sgn*yokeY; g.add(yoke); rt.yoke = yoke;
+  const armH = F.pivot + .06;
+  yoke.add(mk3(cg('bridge'+t+F.arm, () => RB(F.arm*2+.06,.05,.13,.015)), MT.housing, 0, sgn*.025, 0));
+  for (const x of [-1,1]){
+    yoke.add(mk3(cg('arm'+t+F.pivot.toFixed(2), () => RB(.05, armH, .13, .015)), MT.housing, x*F.arm, sgn*armH/2, 0));
+    yoke.add(mk3(cg('armVent'+t+F.pivot.toFixed(2), () => new THREE.PlaneGeometry(armH*.55,.07)), MT.vent, x*(F.arm+.026), sgn*armH*.45, 0, 0, x*Math.PI/2, Math.PI/2));
+    yoke.add(mk3(cg('hub', () => new THREE.CylinderGeometry(.04,.04,.07,18)), MT.housing2, x*(F.arm-.01), sgn*F.pivot, 0, 0, 0, Math.PI/2));
+    yoke.add(mk3(cg('knob', () => new THREE.CylinderGeometry(.022,.022,.03,12)), MT.metal, x*(F.arm+.035), sgn*F.pivot, 0, 0, 0, Math.PI/2));
+  }
+  rt.pivotH = sgn*(yokeY + F.pivot);
+  const head = new THREE.Group(); head.position.y = sgn*F.pivot; yoke.add(head); rt.head = head;
+  rt.lensMat = new THREE.MeshBasicMaterial({ color:0x000000 });
+  const lensDisc = (r, y) => head.add(mk3(cg('disc'+r, () => new THREE.CircleGeometry(r, 40)), rt.lensMat, 0, y, 0, Math.PI/2, 0, 0));
+  switch(t){
+    case 'moving': {
+      head.add(new THREE.Mesh(lathe('mhBody', [[0,.22],[.1,.22],[.145,.19],[.165,.12],[.17,0],[.16,-.12],[.15,-.2],[.142,-.225],[0,-.225]]), MT.housing));
+      head.add(mk3(cg('mhRing', () => new THREE.TorusGeometry(.142,.012,10,40)), MT.housing2, 0, -.225, 0, Math.PI/2));
+      head.add(mk3(cg('mhGlass', () => new THREE.CircleGeometry(.132, 40)), MT.glass, 0, -.226, 0, Math.PI/2));
+      lensDisc(.06, -.228);
+      head.add(mk3(cg('mhVent', () => new THREE.CylinderGeometry(.171,.171,.06,40,1,true)), MT.vent, 0, .03, 0));
+      break; }
+    case 'wash': {
+      head.add(new THREE.Mesh(lathe('washBody', [[0,.16],[.14,.16],[.2,.12],[.22,.02],[.22,-.12],[.21,-.155],[0,-.155]]), MT.housing));
+      head.add(mk3(cg('washFace', () => new THREE.CircleGeometry(.205, 40)), MT.vent, 0, -.156, 0, Math.PI/2));
+      const pos = [[0,0]]; for (let ring=1; ring<=2; ring++) for (let k=0;k<6*ring;k++){ const a = k/(6*ring)*Math.PI*2; pos.push([Math.cos(a)*.072*ring, Math.sin(a)*.072*ring]); }
+      const em = new THREE.InstancedMesh(cg('washCell', () => new THREE.CircleGeometry(.03, 18)), rt.lensMat, pos.length);
+      const cup = new THREE.InstancedMesh(cg('washCup', () => new THREE.CircleGeometry(.036, 18)), MT.reflector, pos.length);
+      const mm = new THREE.Matrix4(), q = new THREE.Quaternion().setFromAxisAngle(V3(1,0,0), Math.PI/2);
+      pos.forEach(([x,z],i) => { mm.compose(V3(x,-.159,z), q, V3(1,1,1)); em.setMatrixAt(i, mm); mm.compose(V3(x,-.157,z), q, V3(1,1,1)); cup.setMatrixAt(i, mm); });
+      head.add(cup, em);
+      head.add(mk3(cg('washRing', () => new THREE.TorusGeometry(.212,.012,10,40)), MT.housing2, 0, -.156, 0, Math.PI/2));
+      break; }
+    case 'strobe': {
+      head.add(new THREE.Mesh(cg('strBody', () => RB(.74,.15,.27,.03)), MT.housing));
+      head.add(mk3(cg('strFrame', () => new THREE.PlaneGeometry(.68,.2)), MT.vent, 0, -.0755, 0, Math.PI/2));
+      head.add(mk3(cg('strLED', () => new THREE.PlaneGeometry(.62,.11)), rt.lensMat, 0, -.077, 0, Math.PI/2));
+      for (const z of [-.075,.075]) head.add(mk3(cg('strPix', () => new THREE.PlaneGeometry(.62,.025)), MT.reflector, 0, -.0765, z, Math.PI/2));
+      head.add(mk3(cg('strFins', () => new THREE.BoxGeometry(.6,.03,.22)), MT.vent, 0, .085, 0));
+      break; }
+    case 'stadium': {
+      head.add(new THREE.Mesh(cg('stdBody', () => RB(.72,.2,.72,.04)), MT.housing2));
+      head.add(mk3(cg('stdRef', () => new THREE.PlaneGeometry(.64,.64)), MT.reflector, 0, -.1005, 0, Math.PI/2));
+      head.add(mk3(cg('stdEm', () => new THREE.PlaneGeometry(.46,.46)), rt.lensMat, 0, -.102, 0, Math.PI/2));
+      head.add(mk3(cg('stdGlass', () => new THREE.PlaneGeometry(.66,.66)), new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.05, transmission:0, transparent:true, opacity:.18, metalness:0 }), 0, -.104, 0, Math.PI/2));
+      const fins = new THREE.InstancedMesh(cg('stdFin', () => new THREE.BoxGeometry(.66,.12,.012)), MT.housing, 11); const mm = new THREE.Matrix4();
+      for (let i=0;i<11;i++){ mm.makeTranslation(0, .16, -.3 + i*.06); fins.setMatrixAt(i, mm); } head.add(fins);
+      break; }
+    case 'toner': {
+      head.add(new THREE.Mesh(cg(`tonBody${headW}${headD}`, () => RB(headW, headH, headD, .03)), MT.housing));
+      rt.cells = [];
+      const cupG = lathe('tonCup', [[.02,.0],[.06,-.03],[.115,-.08],[.125,-.09]], 24);
+      for (let i=0;i<rt.tcols*rt.trows;i++){
+        const x = (i%rt.tcols - (rt.tcols-1)/2)*.3, z = (Math.floor(i/rt.tcols) - (rt.trows-1)/2)*.3;
+        head.add(mk3(cupG, MT.reflector, x, -headH/2+.09, z));
+        const cm = new THREE.MeshBasicMaterial({ color:0 }); rt.cells.push(cm);
+        head.add(mk3(cg('tonBulb', () => new THREE.SphereGeometry(.035, 16, 10)), cm, x, -headH/2+.07, z));
+        head.add(mk3(cg('tonLens', () => new THREE.RingGeometry(.11,.125,32)), MT.housing2, x, -headH/2-.001, z, Math.PI/2));
+      }
+      break; }
+    case 'matrix': {
+      head.add(new THREE.Mesh(cg('mtxBody', () => RB(.68,.1,.68,.02)), MT.housing));
+      head.add(mk3(cg('mtxFace', () => new THREE.PlaneGeometry(.64,.64)), MT.vent, 0, -.0505, 0, Math.PI/2));
+      const im = new THREE.InstancedMesh(cg('mtxPix', () => new THREE.CircleGeometry(.045, 20)), new THREE.MeshBasicMaterial({ color:0xffffff }), 25);
+      const cups = new THREE.InstancedMesh(cg('mtxCup', () => new THREE.RingGeometry(.045,.055,20)), MT.reflector, 25);
+      const mm = new THREE.Matrix4(), q = new THREE.Quaternion().setFromAxisAngle(V3(1,0,0), Math.PI/2);
+      for (let i=0;i<25;i++){ const p = V3((i%5-2)*.125, -.052, (Math.floor(i/5)-2)*.125); mm.compose(p, q, V3(1,1,1)); im.setMatrixAt(i, mm); cups.setMatrixAt(i, mm); im.setColorAt(i, new THREE.Color(0)); }
+      head.add(cups, im); rt.pix = im; break; }
+    case 'laser': {
+      head.add(new THREE.Mesh(cg('lasBody', () => RB(.38,.2,.3,.02)), MT.housing2));
+      const fins = new THREE.InstancedMesh(cg('lasFin', () => new THREE.BoxGeometry(.008,.06,.28)), MT.metal, 14); const mm = new THREE.Matrix4();
+      for (let i=0;i<14;i++){ mm.makeTranslation(-.17 + i*.026, .13, 0); fins.setMatrixAt(i, mm); } head.add(fins);
+      head.add(mk3(cg('lasWin', () => new THREE.PlaneGeometry(.12,.05)), MT.glass, 0, -.1005, .06, Math.PI/2));
+      head.add(mk3(cg('lasAp', () => new THREE.PlaneGeometry(.025,.025)), rt.lensMat, 0, -.102, .06, Math.PI/2));
+      head.add(mk3(cg('lasKey', () => new THREE.PlaneGeometry(.04,.02)), MT.hazard, .12, -.1005, -.09, Math.PI/2));
+      break; }
+  }
+}
+function buildPyroUnit(g){
+  g.add(mk3(cg('pyBase', () => RB(.46,.26,.46,.03)), MT.housing, 0, .13, 0));
+  g.add(mk3(cg('pyStripe', () => new THREE.BoxGeometry(.465,.04,.465)), MT.hazard, 0, .04, 0));
+  g.add(mk3(cg('pyNozzle', () => new THREE.CylinderGeometry(.05,.08,.14,18)), MT.metal, 0, .33, 0));
+  g.add(mk3(cg('pyTop', () => new THREE.CylinderGeometry(.035,.035,.03,14)), MT.vent, 0, .41, 0));
+  g.add(mk3(cg('pyConn', () => new THREE.CylinderGeometry(.025,.025,.06,12)), MT.metal, .25, .1, 0, 0, 0, Math.PI/2));
+  g.add(mk3(cg('pyLed', () => new THREE.PlaneGeometry(.04,.02)), new THREE.MeshBasicMaterial({ color:0xff2020 }), 0, .2, .231));
+}
 
 /* ---------- device build ---------- */
 const devGroup = new THREE.Group(); scene.add(devGroup);
@@ -547,45 +707,28 @@ function buildDevice(d){
   if (T.kind==='light'){
     const hung = d.mount==='hung', sgn = hung ? -1 : 1;
     if (d.type!=='pyro'){
-      const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.32), bodyMat); base.position.y = sgn*0.06; g.add(base);
-      if (hung){ const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), bodyMat); clamp.position.y = 0.1; g.add(clamp); }
-      const head = new THREE.Group(); head.position.y = sgn*0.34; g.add(head); rt.head = head;
-      rt.lensMat = new THREE.MeshBasicMaterial({ color:0x000000 });
-      let geo, lensGeo;
-      switch(d.type){
-        case 'moving': geo = new THREE.CylinderGeometry(0.16,0.2,0.42,18); lensGeo = new THREE.CircleGeometry(0.13,18); break;
-        case 'wash': geo = new THREE.CylinderGeometry(0.2,0.2,0.34,18); lensGeo = new THREE.CircleGeometry(0.18,18); break;
-        case 'strobe': geo = new THREE.BoxGeometry(0.62,0.16,0.22); lensGeo = new THREE.PlaneGeometry(0.56,0.17); break;
-        case 'stadium': geo = new THREE.BoxGeometry(0.7,0.24,0.7); lensGeo = new THREE.PlaneGeometry(0.62,0.62); break;
-        case 'toner': { const c = +d.p.cells||4; const cols = c===2?2:c===4?2:4, rows = c===2?1:2;
-          geo = new THREE.BoxGeometry(cols*0.3+0.06, 0.2, rows*0.3+0.06); lensGeo = null; rt.cells = [];
-          for (let i=0;i<c;i++){ const cm = new THREE.MeshBasicMaterial({ color:0 }); const cell = new THREE.Mesh(new THREE.CircleGeometry(0.12,16), cm);
-            cell.rotation.x = Math.PI/2; cell.position.set((i%cols - (cols-1)/2)*0.3, -0.105, (Math.floor(i/cols) - (rows-1)/2)*0.3); head.add(cell); rt.cells.push(cm); }
-          break; }
-        case 'matrix': { geo = new THREE.BoxGeometry(0.66,0.08,0.66); lensGeo = null;
-          const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.1,0.1), new THREE.MeshBasicMaterial({ color:0xffffff }), 25);
-          const m = new THREE.Matrix4(), q = new THREE.Quaternion().setFromAxisAngle(V3(1,0,0), Math.PI/2);
-          for (let i=0;i<25;i++){ m.compose(V3((i%5-2)*0.125, -0.045, (Math.floor(i/5)-2)*0.125), q, V3(1,1,1)); im.setMatrixAt(i, m); im.setColorAt(i, new THREE.Color(0)); }
-          head.add(im); rt.pix = im; break; }
-        case 'laser': geo = new THREE.BoxGeometry(0.34,0.22,0.3); lensGeo = new THREE.CircleGeometry(0.04,10); break;
-      }
-      const hm = new THREE.Mesh(geo, bodyMat); head.add(hm);
-      if (lensGeo){ const lens = new THREE.Mesh(lensGeo, rt.lensMat); lens.rotation.x = Math.PI/2; lens.position.y = -0.215; head.add(lens); }
+      buildFixture(d, rt, g, sgn, hung);
       if (T.real || d.type==='strobe'){ rt.beam = beamMesh(); scene.add(rt.beam); }
       if (d.type==='laser'){
         rt.lasers = []; rt.laserMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false });
-        for (let i=0;i<(+d.p.beams||1);i++){ const b = new THREE.Mesh(laserGeo, rt.laserMat); b.raycast=()=>{}; b.frustumCulled=false; scene.add(b); rt.lasers.push(b); }
+        for (let i=0;i<(+d.p.beams||1);i++){ const b = new THREE.Mesh(laserGeo, rt.laserMat); b.raycast=()=>{}; b.frustumCulled=false; b.layers.set(2); scene.add(b); rt.lasers.push(b); }
       }
     } else {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.32,0.42), new THREE.MeshStandardMaterial({ color:0x141414, roughness:.6 })); box.position.y = 0.16; g.add(box);
-      const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.07,0.12,10), bodyMat); noz.position.y = 0.38; g.add(noz);
+      buildPyroUnit(g);
       rt.fireT = -99; rt.lastAuto = performance.now()/1000; rt.burst = false;
     }
   } else if (T.kind==='camera'){
     const legs = new THREE.Group(); g.add(legs);
     const headG = new THREE.Group(); scene.add(headG); rt.camHead = headG;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.24,0.42), new THREE.MeshStandardMaterial({ color:0x1a1d22, roughness:.4, metalness:.4 })); headG.add(body);
-    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,0.32,14), bodyMat); lens.rotation.x = Math.PI/2; lens.position.z = -0.34; headG.add(lens);
+    headG.add(mk3(cg('camBody', () => RB(.2,.25,.42,.025)), MT.cam));
+    headG.add(mk3(cg('camLens', () => new THREE.CylinderGeometry(.065,.075,.34,24)), MT.camDark, 0, 0, -.36, Math.PI/2));
+    headG.add(mk3(cg('camRing', () => new THREE.CylinderGeometry(.078,.078,.05,24)), MT.cam, 0, 0, -.3, Math.PI/2));
+    headG.add(mk3(cg('camHood', () => RB(.2,.15,.1,.01)), MT.camDark, 0, 0, -.57));
+    headG.add(mk3(cg('camHoodIn', () => new THREE.PlaneGeometry(.17,.12)), MT.glass, 0, 0, -.519));
+    headG.add(mk3(cg('camVF', () => RB(.09,.08,.18,.01)), MT.camDark, -.13, .1, -.08));
+    headG.add(mk3(cg('camHandle', () => new THREE.TorusGeometry(.08,.012,8,16,Math.PI)), MT.camDark, 0, .125, .02, 0, Math.PI/2, 0));
+    headG.add(mk3(cg('camBatt', () => RB(.16,.12,.06,.01)), MT.camDark, 0, -.02, .24));
+    headG.add(mk3(cg('camPanBar', () => new THREE.CylinderGeometry(.012,.012,.55,8)), MT.metal, .08, -.12, .38, Math.PI/2 - .35, 0, 0));
     rt.tally = new THREE.MeshBasicMaterial({ color:0x330000 }); const tl = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,0.04), rt.tally); tl.position.set(0,0.14,-0.1); headG.add(tl);
     tagPick(headG, d.id);
     if (d.type==='cam_tripod' || d.type==='cam_ptz'){
@@ -602,7 +745,7 @@ function buildDevice(d){
       const op = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 1.0, 4, 10), new THREE.MeshStandardMaterial({ color:0x30343c, roughness:.8 })); op.position.y = 0.75; legs.add(op);
       const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,0.9,6), bodyMat); vest.position.set(0.3,1.0,-0.1); legs.add(vest);
     }
-    rt.cam = new THREE.PerspectiveCamera(30, 16/9, 0.1, 1000); scene.add(rt.cam);
+    rt.cam = new THREE.PerspectiveCamera(30, 16/9, 0.1, 1000); rt.cam.layers.enable(2); scene.add(rt.cam);
     rt.hcam = new THREE.PerspectiveCamera(30, 16/9, 0.3, 4); scene.add(rt.hcam);
     rt.helper = new THREE.CameraHelper(rt.hcam);
     rt.helper.layers.set(1); rt.helper.raycast = ()=>{}; scene.add(rt.helper);
@@ -639,7 +782,7 @@ function addDevice(type, pos, extra={}){
 const getDev = id => S.devices.find(d => d.id===id);
 
 /* aim helpers */
-function headPos(d, out=V3()){ out.set(d.pos[0], d.pos[1], d.pos[2]); if (d.type!=='pyro') out.y += (d.mount==='hung'?-0.34:0.34); return out; }
+function headPos(d, out=V3()){ out.set(d.pos[0], d.pos[1], d.pos[2]); if (d.type!=='pyro') out.y += d.rt && d.rt.pivotH !== undefined ? d.rt.pivotH : (d.mount==='hung'?-0.38:0.38); return out; }
 function aimLight(d, target){ const h = headPos(d); const v = target.clone().sub(h).normalize(); d.p.tilt = Math.round(Math.acos(clamp(-v.y,-1,1))/DEG); d.p.pan = Math.round(Math.atan2(-v.x, -v.z)/DEG); }
 function camLens(d, t=0, out=V3()){
   const p = d.p;
@@ -683,7 +826,7 @@ function updateLights(t, dt){
     const ev = evalLight(d, t); const out = ev.out * S.dimmer * modeK();
     const dir = dirFrom(ev.pan, ev.tilt, V3());
     const hp = headPos(d, V3());
-    tmpQ.setFromUnitVectors(DOWN, dir); rt.head.quaternion.copy(tmpQ);
+    tmpQ.setFromUnitVectors(DOWN, dir); rt.yoke.rotation.y = ev.pan*DEG; rt.head.rotation.x = ev.tilt*DEG;
     if (rt.lensMat) rt.lensMat.color.copy(ev.col).multiplyScalar(out*3);
     if (rt.cells){ rt.cells.forEach((m,i) => { let k = out; if (d.p.effect==='chase') k = (+d.p.intensity)*S.dimmer*modeK()*Math.pow(Math.max(0,Math.sin(t*(+d.p.speed)*4 - i*1.2)),2); m.color.copy(ev.col).multiplyScalar(k*3); }); }
     if (rt.pix){
@@ -703,8 +846,8 @@ function updateLights(t, dt){
       let L = d.type==='stadium' ? 120 : d.type==='strobe' ? 6 : d.type==='toner' ? 14 : 60;
       if (dir.y < -0.01) L = Math.min(L, hp.y / -dir.y); if (dir.y >= -0.01 && d.type!=='stadium') L = Math.min(L, 40);
       const ang = clamp(+d.p.angle, 1, 120)*DEG/2; const r = Math.tan(ang)*L;
-      rt.beam.position.copy(hp).addScaledVector(dir, 0.2); rt.beam.quaternion.copy(tmpQ); rt.beam.scale.set(Math.max(r,0.01), Math.max(L,0.1), Math.max(r,0.01));
-      const wide = d.type==='wash'||d.type==='toner'||d.type==='strobe' ? 0.35 : d.type==='stadium' ? 0.5 : 1;
+      rt.beam.position.copy(hp).addScaledVector(dir, d.type==='moving' ? 0.23 : d.type==='stadium' ? 0.12 : 0.17); rt.beam.quaternion.copy(tmpQ); rt.beam.scale.set(Math.max(r,0.01), Math.max(L,0.1), Math.max(r,0.01));
+      const wide = d.type==='wash'||d.type==='toner'||d.type==='strobe' ? 0.35 : d.type==='stadium' ? 0.2 : 1;
       rt.beam.material.uniforms.uColor.value.copy(ev.col); rt.beam.material.uniforms.uAlpha.value = out*beamK*0.55*wide;
       rt.beam.visible = out > 0.002 && beamK > 0;
     }
@@ -750,7 +893,7 @@ const pMat = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blen
   vertexShader:`attribute vec3 aCol; attribute float aSize; attribute float aAlpha; varying vec3 vC; varying float vA; uniform float uScale;
   void main(){ vC=aCol; vA=aAlpha; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_PointSize = aSize*uScale/max(0.5,-mv.z); gl_Position = projectionMatrix*mv; }`,
   fragmentShader:`varying vec3 vC; varying float vA; void main(){ float d = length(gl_PointCoord-0.5); float a = smoothstep(0.5,0.0,d)*vA; if(a<0.003) discard; gl_FragColor = vec4(vC*2.0, a); }` });
-const particles = new THREE.Points(pGeo, pMat); particles.frustumCulled = false; particles.raycast = ()=>{}; scene.add(particles);
+const particles = new THREE.Points(pGeo, pMat); particles.frustumCulled = false; particles.raycast = ()=>{}; particles.layers.set(2); scene.add(particles);
 let pHead = 0;
 function emit(x,y,z, vx,vy,vz, life, kind, col){
   const i = pHead; pHead = (pHead+1) % PMAX;
@@ -929,6 +1072,7 @@ async function importFiles(fileList, fromProject=null){
       m.rt && modelGroup.remove(m.rt.g);
       installModel(m, root);
       for (const t of m.tex) applyTex(m, t, false);
+      applyMatp(m);
       if (!fromProject){ S.models.push(m); select({ kind:'model', id:m.id }); }
       const sz = modelSize(m);
       toast(`Imported ${main.name}: ${sz.x.toFixed(1)} × ${sz.z.toFixed(1)} × ${sz.y.toFixed(1)} m (W × D × H), units ${m.rt.unitsUsed}. Check the size in the inspector.`, 'ok', 7000);
@@ -949,8 +1093,14 @@ function installModel(m, root){
   root.updateMatrixWorld(true);
   const raw = new THREE.Box3().setFromObject(root); const rs = raw.getSize(V3());
   const auto = guessUnits(Math.max(rs.x, rs.y, rs.z));
-  const mats = new Set();
-  root.traverse(o => { if (o.isMesh){ o.userData.modelId = m.id; if (!o.material) o.material = new THREE.MeshStandardMaterial({ color:0x9aa4b2 });
+  const mats = new Set(), conv = new Map();
+  const toStd = mt => { if (!mt) return new THREE.MeshStandardMaterial({ color:0x9aa4b2, roughness:.6 }); if (mt.isMeshStandardMaterial) return mt; if (conv.has(mt)) return conv.get(mt);
+    const n = new THREE.MeshStandardMaterial({ name:mt.name, color:mt.color ? mt.color.clone() : new THREE.Color(0xffffff), map:mt.map||null, normalMap:mt.normalMap||null, alphaMap:mt.alphaMap||null,
+      transparent:mt.transparent, opacity:mt.opacity, side:mt.side, vertexColors:mt.vertexColors, alphaTest:mt.alphaTest||0,
+      emissive:mt.emissive ? mt.emissive.clone() : new THREE.Color(0), emissiveMap:mt.emissiveMap||null,
+      roughness: mt.shininess !== undefined ? clamp(1 - Math.sqrt(mt.shininess/100)*0.8, 0.12, 0.95) : 0.7, metalness: 0 });
+    if (mt.bumpMap){ n.bumpMap = mt.bumpMap; n.bumpScale = mt.bumpScale; } conv.set(mt, n); return n; };
+  root.traverse(o => { if (o.isMesh){ o.userData.modelId = m.id; o.material = Array.isArray(o.material) ? o.material.map(toStd) : toStd(o.material);
     (Array.isArray(o.material)?o.material:[o.material]).forEach(mt => { mats.add(mt); if (mt.map) mt.map.colorSpace = THREE.SRGBColorSpace; }); } });
   m.rt = { g, inner, root, raw, auto, mats:[...mats], gltf:m.rt_gltf, selMat:-1 };
   modelGroup.add(g); placeTargets.push(g);
@@ -1022,10 +1172,25 @@ function clearTex(m, idx){
   for (const t of m.tex){ if (t.mat!=='all') { const mt = m.rt.mats[t.mat]; if (mt){ mt.map = t.tex; mt.needsUpdate = true; } } }
   applySelfLit(m);
 }
+const FINISH = [
+  ['Matte', { rough:.9, metal:0, refl:.3 }], ['Satin', { rough:.5, metal:0, refl:.7 }], ['Gloss', { rough:.15, metal:0, refl:1.2 }],
+  ['Brushed metal', { rough:.35, metal:1, refl:1 }], ['Chrome', { rough:.05, metal:1, refl:1.6 }], ['Black deck', { rough:.65, metal:0, refl:.5, tint:'#2a2c30' }],
+  ['LED / glass', { rough:.08, metal:0, refl:.9 }], ['Gold trim', { rough:.25, metal:1, refl:1.2, tint:'#d4a64a' }] ];
+function restoreTint(m, key){ for (const mt of matTargets(m, key)) if (mt.userData.origCol != null && mt.color) mt.color.setHex(mt.userData.origCol); }
+function matTargets(m, key){ return key==='all' || key===-1 ? m.rt.mats : [m.rt.mats[key]].filter(Boolean); }
+function applyMatp(m){
+  m.matp ??= {};
+  const keys = Object.keys(m.matp).sort((a,b) => (a==='all'?-1:0) - (b==='all'?-1:0));
+  for (const k of keys){ const v = m.matp[k]; for (const mt of matTargets(m, k==='all'?'all':+k)){
+    if (mt.userData.origCol === undefined) mt.userData.origCol = mt.color ? mt.color.getHex() : null;
+    if (v.rough != null) mt.roughness = v.rough; if (v.metal != null) mt.metalness = v.metal; if (v.refl != null) mt.userData.refl = v.refl;
+    if (v.tint) mt.color.set(v.tint); mt.needsUpdate = true; } }
+  envDirty = true;
+}
 function texFor(m, i){ return (m.tex||[]).find(t => t.mat===i) || (m.tex||[]).find(t => t.mat==='all'); }
 function duplicateModel(m){
   const rec = { id:S.nextId++, name:m.name + ' copy', units:m.units, selfLit:m.selfLit, visible:true, pos:[m.pos[0]+6, m.pos[1], m.pos[2]+6],
-    rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:[...(m.scale||[1,1,1])], tex:(m.tex||[]).map(t => ({ mat:t.mat, kind:t.kind, name:t.name, file:t.file, rx:t.rx, ry:t.ry })) };
+    rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:[...(m.scale||[1,1,1])], matp:JSON.parse(JSON.stringify(m.matp||{})), tex:(m.tex||[]).map(t => ({ mat:t.mat, kind:t.kind, name:t.name, file:t.file, rx:t.rx, ry:t.ry })) };
   S.models.push(rec); importFiles(m.files, rec).then(() => select({ kind:'model', id:rec.id }));
 }
 let pickSurface = null;
@@ -1078,7 +1243,7 @@ canvas.addEventListener('pointerup', e => {
   if (!downAt || Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y) > 5 || e.button!==0) return;
   if (tc.dragging) return;
   setRay(e);
-  if (S.onAir) return;
+  if (S.onAir || renderTab) return;
   if (pickSurface){
     const h = ray.intersectObject(modelGroup, true)[0];
     if (!h) return toast('Click directly on the model.');
@@ -1172,6 +1337,7 @@ function xyzRow(arr, onChange, idp){
 }
 function renderInspector(){
   insp.innerHTML = '';
+  if (renderTab) return renderRenderPanel();
   if (!selected) return renderRigList();
   if (selected.kind==='dev') return renderDevInspector(getDev(selected.id));
   if (selected.kind==='model') return renderModelInspector(getModel(selected.id));
@@ -1285,13 +1451,30 @@ function renderModelInspector(m){
   m.rt.mats.forEach((mt, i) => {
     const t = texFor(m, i);
     list.append(el('div', { class:'matrow' + (m.rt.selMat===i ? ' sel' : '') },
-      el('span', { class:'nm', title:matName(m,i) }, matName(m, i)),
+      el('span', { class:'nm', title:'Select to set its finish', on:{ click:() => { m.rt.selMat = m.rt.selMat===i ? -1 : i; renderInspector(); } } }, matName(m, i)),
       el('span', { class:'st' + (t ? ' on' : '') }, t ? (t.kind==='video' ? 'video' : 'image') : (mt.map ? 'own' : '—')),
       el('button', { title:'Put a JPEG or PNG on this surface', on:{ click:() => chooseTex(m, i, 'image') } }, 'Image'),
       el('button', { title:'Put an MP4 video on this surface', on:{ click:() => chooseTex(m, i, 'video') } }, 'Video'),
       t ? el('button', { title:'Back to the original texture', on:{ click:() => { clearTex(m, t.mat); renderInspector(); markDirty(); } } }, '×') : null));
   });
   insp.append(list);
+  // finish (roughness / metal / reflection)
+  const key = m.rt.selMat >= 0 ? m.rt.selMat : 'all';
+  const ref = key==='all' ? m.rt.mats[0] : m.rt.mats[key];
+  m.matp ??= {};
+  const cur = m.matp[key] || { rough: ref ? +ref.roughness.toFixed(2) : .6, metal: ref ? +ref.metalness.toFixed(2) : 0, refl: ref ? (ref.userData.refl ?? 1) : 1 };
+  insp.append(el('h3', {}, `Finish · ${key==='all' ? 'all surfaces' : matName(m, key)}`));
+  insp.append(el('p', { class:'note' }, key==='all' ? 'Click a surface name above to set its finish on its own. These settings apply to every surface.' : 'Click the name again to go back to all surfaces.'));
+  const setF = (k, v) => { m.matp[key] = { ...cur, ...(m.matp[key]||{}), [k]:v }; if (key==='all') for (const kk of Object.keys(m.matp)) if (kk!=='all') delete m.matp[kk][k]; applyMatp(m); markDirty(); };
+  const pr = el('div', { class:'presets' });
+  FINISH.forEach(([n, v]) => pr.append(el('button', { on:{ click:() => { m.matp[key] = { ...v }; if (key==='all') for (const kk of Object.keys(m.matp)) if (kk!=='all') delete m.matp[kk]; if (!v.tint) restoreTint(m, key); applyMatp(m); renderInspector(); markDirty(); } } }, n)));
+  insp.append(pr);
+  insp.append(fieldRow({ k:'rough', l:'Roughness', t:'range', min:0, max:1, step:.01 }, cur, setF, 'mf'));
+  insp.append(fieldRow({ k:'metal', l:'Metal finish', t:'range', min:0, max:1, step:.01 }, cur, setF, 'mf'));
+  insp.append(fieldRow({ k:'refl', l:'Reflection', t:'range', min:0, max:3, step:.05 }, cur, setF, 'mf'));
+  const tintIn = el('input', { type:'color', id:'mf_tint', value: (m.matp[key] && m.matp[key].tint) || (ref && ref.color ? '#' + ref.color.getHexString() : '#ffffff'), on:{ input:e => setF('tint', e.target.value) } });
+  insp.append(el('div', { class:'row' }, el('label', { for:'mf_tint' }, 'Colour'), tintIn, el('button', { on:{ click:() => { if (m.matp[key]) delete m.matp[key].tint; restoreTint(m, key); applyMatp(m); renderInspector(); markDirty(); } } }, 'Original')));
+  insp.append(el('p', { class:'note' }, 'Low roughness = shiny, high = matte. Metal finish 1 makes it reflect like metal. Reflection sets how strongly the venue reflects in it. Reflections show best in Work light and in the Render tab.'));
   const sel = texFor(m, m.rt.selMat);
   if (sel){ insp.append(el('div', { class:'row' }, el('label', { for:'md_rep' }, 'Repeat'), el('input', { type:'number', id:'md_rep', step:0.5, min:0.1, value:sel.rx||1, on:{ change:e => { sel.rx = sel.ry = +e.target.value || 1; sel.tex.repeat.set(sel.rx, sel.ry); markDirty(); } } }))); }
   if ((m.tex||[]).some(t => t.kind==='video')) insp.append(el('div', { class:'btns' },
@@ -1361,6 +1544,136 @@ function camFromView(dev){
   return d;
 }
 
+/* ---------- render tab ---------- */
+let renderTab = false, envDirty = true, lastBlob = null, lastName = '';
+const RES = [['1280x720','HD 1280 × 720'],['1920x1080','Full HD 1920 × 1080'],['2560x1440','QHD 2560 × 1440'],['3840x2160','4K 3840 × 2160'],
+  ['1080x1350','Portrait 1080 × 1350'],['1080x1920','Story 1080 × 1920'],['3508x2480','A4 print 3508 × 2480'],['custom','Custom size']];
+const R = { res:'1920x1080', cw:1920, ch:1080, quality:'high', shadows:true, ao:true, aoStrength:1, dof:false, fstop:4, focusAuto:true, focusDist:30,
+  exposure:1, env:1, vignette:true, glossy:true, hideGuides:true, hideCams:true, live:true };
+try { Object.assign(R, JSON.parse(localStorage.getItem('arena-planner-render') || '{}')); } catch {}
+const saveR = () => { try { localStorage.setItem('arena-planner-render', JSON.stringify(R)); } catch {} };
+function outSize(){ if (R.res==='custom') return [clamp(Math.round(R.cw),64,8192), clamp(Math.round(R.ch),64,8192)]; return R.res.split('x').map(Number); }
+function setTab(t){
+  renderTab = t==='render';
+  $('#tabDesign').classList.toggle('on', !renderTab); $('#tabRender').classList.toggle('on', renderTab);
+  if (renderTab){ setPlacing(null); exitSeat(false); if (planMode) setPlan(false); select(null); camera.layers.disable(1); }
+  else { camera.layers.enableAll(); $('#rlabel').hidden = true; }
+  canvas.classList.toggle('framed', renderTab);
+  envDirty = true; resize(); renderInspector();
+}
+$('#tabDesign').onclick = () => setTab('design'); $('#tabRender').onclick = () => setTab('render');
+function renderRenderPanel(){
+  const upd = (k, v) => { R[k] = v; saveR(); envDirty = true; if (k==='res' || k==='cw' || k==='ch') { resize(); renderInspector(); } };
+  insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, 'Render'), el('span', { class:'note' }, 'Final image output')));
+  insp.append(el('p', { class:'note' }, 'The view is framed to the output size. What you see is what renders, at higher quality.'));
+  insp.append(el('h3', {}, 'Output'));
+  insp.append(fieldRow({ k:'res', l:'Size', t:'select', o:RES.map(r=>r[0]) }, R, upd, 'rd'));
+  const sel = document.getElementById('rd_res'); [...sel.options].forEach((o,i) => o.textContent = RES[i][1]);
+  if (R.res==='custom'){ insp.append(el('div', { class:'row' }, el('label', {}, 'Width × height'),
+    el('input', { type:'number', id:'rd_cw', value:R.cw, min:64, max:8192, style:'width:80px', on:{ change:e => upd('cw', +e.target.value) } }),
+    el('input', { type:'number', id:'rd_ch', value:R.ch, min:64, max:8192, style:'width:80px', on:{ change:e => upd('ch', +e.target.value) } }))); }
+  insp.append(fieldRow({ k:'quality', l:'Quality', t:'select', o:['draft','high','ultra'] }, R, upd, 'rd'));
+  const qs = document.getElementById('rd_quality'); [...qs.options].forEach(o => o.textContent = { draft:'Draft (fast)', high:'High (2× supersampled)', ultra:'Ultra (2×, sharper shadows)' }[o.value]);
+  const vs = el('select', { id:'rd_view', on:{ change:e => setOnAir(e.target.value ? +e.target.value : null) } });
+  vs.append(el('option', { value:'' }, 'Free view (current)')); camDevices().forEach(d => vs.append(el('option', { value:d.id, selected:S.onAir===d.id }, d.name)));
+  insp.append(el('div', { class:'row' }, el('label', { for:'rd_view' }, 'Shot from'), vs));
+  insp.append(el('h3', {}, 'Realism'));
+  insp.append(fieldRow({ k:'shadows', l:'Shadows', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'ao', l:'Contact shadows (AO)', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'aoStrength', l:'AO strength', t:'range', min:0, max:1.5, step:.05 }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'exposure', l:'Exposure', t:'range', min:.3, max:3, step:.05 }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'env', l:'Reflections', t:'range', min:0, max:3, step:.05 }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'glossy', l:'Polished floor', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'vignette', l:'Lens vignette', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'dof', l:'Depth of field', t:'bool' }, R, upd, 'rd'));
+  if (R.dof){
+    insp.append(fieldRow({ k:'fstop', l:'Aperture f/', t:'range', min:1.4, max:16, step:.1 }, R, upd, 'rd'));
+    insp.append(fieldRow({ k:'focusAuto', l:'Auto focus (centre)', t:'bool' }, R, (k,v) => { upd(k,v); renderInspector(); }, 'rd'));
+    if (!R.focusAuto) insp.append(fieldRow({ k:'focusDist', l:'Focus distance m', t:'range', min:1, max:150, step:.5 }, R, upd, 'rd'));
+  }
+  insp.append(fieldRow({ k:'hideGuides', l:'Hide grid & labels', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'hideCams', l:'Hide camera rigs', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'live', l:'Live preview of effects', t:'bool' }, R, upd, 'rd'));
+  insp.append(el('p', { class:'note' }, 'Glow (bloom) and haze use the sliders in the top bar. Turn off Live preview if the view gets slow; the render still uses every effect.'));
+  insp.append(el('div', { class:'btns', style:'margin-top:14px' }, el('button', { class:'primary bigbtn', id:'bRender', on:{ click:doRender } }, 'Render PNG')));
+  insp.append(el('p', { class:'note', id:'rStatus' }, 'Lights, strobes and pyro are captured at the moment you press Render. Pause the show or jump to a cue first.'));
+}
+function focusDistance(cam){
+  if (!R.focusAuto) return R.focusDist;
+  if (cam===camera) return camera.position.distanceTo(controls.target);
+  ray.setFromCamera(new THREE.Vector2(0,0), cam); const h = ray.intersectObjects([...placeTargets, modelGroup, stageGroup], true).find(x => x.object.visible);
+  return h ? h.distance : 30;
+}
+let shadowsOn = false, shadowSize = 1024, fxFrame = 0;
+function markShadows(){
+  scene.traverse(o => { if (!o.isMesh) return; const fx = o.layers.mask === 4 || (o.material && o.material.blending === THREE.AdditiveBlending);
+    if (fx){ o.castShadow = o.receiveShadow = false; return; } o.receiveShadow = true; o.castShadow = o !== seatMesh && o !== floor && o !== ground && !o.userData.guide; });
+}
+function setShadows(on, size=1024){
+  if (on !== shadowsOn){ shadowsOn = on; renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap; if (on) markShadows();
+    scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
+  pool.forEach((l,i) => { const want = on && i < 8; if (l.castShadow !== want) l.castShadow = want;
+    if (l.shadow.mapSize.x !== size){ l.shadow.mapSize.set(size,size); if (l.shadow.map){ l.shadow.map.dispose(); l.shadow.map = null; } }
+    l.shadow.bias = -0.0004; l.shadow.normalBias = 0.04; l.shadow.camera.near = 0.5; l.shadow.camera.far = 170; });
+  shadowSize = size;
+}
+function setupEffects(cam, final=false){
+  const fx = renderTab && (R.live || final) && cam.isPerspectiveCamera;
+  if (fx){ aoCam.copy(cam); aoCam.layers.set(0); aoCam.updateMatrixWorld(); }
+  gtao.enabled = fx && R.ao; gtao.camera = aoCam; gtao.blendIntensity = R.aoStrength;
+  bokeh.enabled = fx && R.dof; bokeh.camera = aoCam;
+  if (bokeh.enabled && (final || fxFrame % 10 === 0)){ bokeh.uniforms.focus.value = focusDistance(cam); }
+  bokeh.uniforms.aperture.value = 0.0011 / R.fstop; bokeh.uniforms.maxblur.value = 0.014;
+  vignette.enabled = renderTab && R.vignette;
+  renderer.toneMappingExposure = renderTab ? R.exposure : 1;
+  setShadows(fx && R.shadows, final && R.quality==='ultra' ? 2048 : 1024);
+  if (shadowsOn && (final || fxFrame % 90 === 0)) markShadows();
+  const glossy = renderTab && R.glossy; floorMat.roughness = glossy ? .32 : .82; floorMat.metalness = glossy ? .15 : .05;
+  const showGuides = !(renderTab && R.hideGuides); venue.traverse(o => { if (o.userData.guide) o.visible = showGuides; });
+  stageGroup.traverse(o => { if (o.userData.guide) o.visible = showGuides; });
+  const showCams = !(renderTab && R.hideCams);
+  for (const d of S.devices) if (d.rt && TYPE[d.type].kind==='camera'){ d.rt.g.visible = showCams; d.rt.camHead.visible = showCams; if (d.rt.arm){ d.rt.arm.visible = showCams; d.rt.cw.visible = showCams; } }
+  fxFrame++;
+}
+function updateEnv(){
+  const k = (S.mode==='work' ? 1 : S.mode==='show' ? 0.14 : 0.01) * (renderTab ? R.env : 1);
+  scene.traverse(o => { if (!o.material) return; (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m.isMeshStandardMaterial) m.envMapIntensity = (m.userData.refl ?? 1) * k; }); });
+  envDirty = false;
+}
+async function doRender(){
+  const [W, H] = outSize();
+  const gl = renderer.getContext(); const maxDim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0], 8192);
+  let ss = R.quality==='draft' ? 1 : Math.min(2, Math.sqrt(12.5e6 / (W*H))); ss = Math.max(1, Math.floor(ss*4)/4);
+  while (ss > 1 && (W*ss > maxDim || H*ss > maxDim)) ss -= 0.25;
+  if (W > maxDim || H > maxDim) return toast(`${W} × ${H} is larger than this graphics card can render (max ${maxDim} px a side). Pick a smaller size.`, 'err');
+  const st = $('#rStatus'); if (st) st.textContent = `Rendering ${W} × ${H}…`; $('#bRender') && ($('#bRender').disabled = true);
+  await new Promise(r => setTimeout(r, 40));
+  const t0 = performance.now(); const pr = renderer.getPixelRatio(); const cam = activeCam(); const prevAspect = cam.aspect;
+  let ok = true;
+  try {
+    rendering = true; envDirty = true; updateEnv();
+    renderer.setPixelRatio(1); composer.setPixelRatio(1); renderer.setSize(W*ss, H*ss, false); composer.setSize(W*ss, H*ss);
+    bloom.resolution.set(W*ss/2, H*ss/2); pMat.uniforms.uScale.value = H*ss*0.9;
+    cam.aspect = W/H; cam.updateProjectionMatrix();
+    for (let i=0;i<3;i++){ setupEffects(cam, true); renderPass.camera = cam; bloom.strength = S.glow * (S.mode==='show' ? 1 : 0.25); hideOwnCam(true); composer.render(); hideOwnCam(false); }
+    const out = document.createElement('canvas'); out.width = W; out.height = H; const g = out.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(canvas, 0, 0, W*ss, H*ss, 0, 0, W, H);
+    lastBlob = await new Promise(r => out.toBlob(r, 'image/png'));
+  } catch(e){ ok = false; console.error(e); toast(`The render failed (${e.message || e}). Try a smaller size or Draft quality.`, 'err'); }
+  finally { rendering = false; cam.aspect = prevAspect; cam.updateProjectionMatrix(); renderer.setPixelRatio(pr); composer.setPixelRatio(pr); resize(); $('#bRender') && ($('#bRender').disabled = false); }
+  if (!ok || !lastBlob) return;
+  const secs = ((performance.now()-t0)/1000).toFixed(1);
+  lastName = `${slug()}-${S.onAir ? getDev(S.onAir).name.replace(/\W+/g,'-').toLowerCase() : 'view'}-${W}x${H}.png`;
+  $('#roImg').src = URL.createObjectURL(lastBlob);
+  $('#roInfo').textContent = `${W} × ${H} PNG · ${ss > 1 ? ss + '× supersampled' : 'no supersampling'} · ${(lastBlob.size/1048576).toFixed(1)} MB · ${secs} s`;
+  $('#renderOut').hidden = false; if (st) st.textContent = 'Done. Save the PNG from the preview.';
+}
+let rendering = false;
+function hideOwnCam(hide){ const d = S.onAir ? getDev(S.onAir) : null; if (d && d.rt) d.rt.camHead.visible = !hide; }
+$('#roSave').onclick = () => lastBlob && saveFile(lastName, lastBlob);
+$('#roAgain').onclick = () => { $('#renderOut').hidden = true; doRender(); };
+$('#roClose').onclick = () => { $('#renderOut').hidden = true; };
+
 /* ---------- camera bus ---------- */
 function refreshCamBar(){
   const bar = $('#cambar'); bar.innerHTML = '';
@@ -1378,7 +1691,7 @@ function setOnAir(id){
   if (id && planMode) setPlan(false);
   controls.enabled = !id; tc.enabled = !id; if (id) tc.detach();
   $('#onair').hidden = !id; if (id) $('#onair').textContent = 'ON AIR · ' + getDev(id).name + '  ·  drag to aim, scroll to zoom';
-  refreshCamBar(); if (selected && selected.kind==='dev') renderInspector();
+  refreshCamBar(); if ((selected && selected.kind==='dev') || renderTab) renderInspector();
 }
 
 /* ---------- views ---------- */
@@ -1522,7 +1835,7 @@ function moveCue(c, dir){ const i = S.cues.indexOf(c), j = i + dir; if (j < 0 ||
 function setMode(m){
   S.mode = m;
   $('#mShow').classList.toggle('on', m==='show'); $('#mWork').classList.toggle('on', m==='work'); $('#mBlack').classList.toggle('on', m==='blackout');
-  S.models.forEach(x => x.rt && applySelfLit(x)); markDirty();
+  S.models.forEach(x => x.rt && applySelfLit(x)); envDirty = true; markDirty();
 }
 function syncTopUI(){ $('#dimmer').value = S.dimmer; $('#haze').value = S.haze; $('#glow').value = S.glow; $('#eventName').value = S.eventName; $('#teamA').value = S.teamA; $('#teamB').value = S.teamB; $('#behind').checked = S.behind; $('#placeholder').checked = S.placeholder; }
 $('#mShow').onclick = () => setMode('show'); $('#mWork').onclick = () => setMode('work'); $('#mBlack').onclick = () => setMode('blackout');
@@ -1617,7 +1930,7 @@ function serialize(withFiles){
     nextId:S.nextId,
     devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, p:d.p })),
     cues:S.cues,
-    models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1],
+    models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1], matp:m.matp||{},
       files: await Promise.all((m.files||[]).map(async f => ({ name:f.name, data:b64(await f.arrayBuffer()) }))),
       tex: await Promise.all((m.tex||[]).map(async t => ({ mat:t.mat, kind:t.kind, name:t.name, rx:t.rx||1, ry:t.ry||1, data:b64(await t.file.arrayBuffer()) }))) }))) : S.models.map(m => ({ id:m.id, name:m.name }))
   }))();
@@ -1636,7 +1949,7 @@ async function loadProject(j, withModels){
   S.cues = j.cues || [];
   syncTopUI(); setMode(S.mode); buildStands(); applyVenue(); refreshCamBar(); renderCues(); select(null);
   if (withModels) for (const m of j.models || []){ if (!m.files || !m.files.length) continue;
-    const files = m.files.map(f => new File([unb64(f.data)], f.name)); const rec = { id:m.id, name:m.name, units:m.units||'auto', selfLit:m.selfLit!==false, visible:m.visible!==false, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1],
+    const files = m.files.map(f => new File([unb64(f.data)], f.name)); const rec = { id:m.id, name:m.name, units:m.units||'auto', selfLit:m.selfLit!==false, visible:m.visible!==false, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1], matp:m.matp||{},
       tex:(m.tex||[]).map(t => ({ mat:t.mat, kind:t.kind, name:t.name, rx:t.rx, ry:t.ry, file:new File([unb64(t.data)], t.name) })) };
     S.models.push(rec); await importFiles(files, rec); }
   else if ((j.models||[]).length) toast(`Your last session had ${j.models.length} imported model${j.models.length>1?'s':''}. Models are only kept in saved project files: use Open to load yours, or import the model again.`, 'info', 9000);
@@ -1707,7 +2020,16 @@ function exampleRig(){
 /* ---------- render loop ---------- */
 const view2 = $('#view'); let VW = 1, VH = 1;
 function resize(){
-  const r = view2.getBoundingClientRect(); VW = Math.max(1, r.width); VH = Math.max(1, r.height);
+  const r = view2.getBoundingClientRect(); let w = r.width, h = r.height;
+  if (renderTab){
+    const [ow, oh] = outSize(), a = ow/oh, m = 18, aw = Math.max(50, w-2*m), ah = Math.max(50, h-2*m);
+    let w2, h2; if (aw/ah > a){ h2 = ah; w2 = ah*a; } else { w2 = aw; h2 = aw/a; }
+    const x = (w-w2)/2, y = (h-h2)/2; w = w2; h = h2;
+    canvas.style.cssText = `inset:auto;left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+    const lb = $('#rlabel'); lb.hidden = false; lb.style.left = (x+8) + 'px'; lb.style.top = (y+8) + 'px';
+    lb.textContent = `${ow} × ${oh} · ${(RES.find(q => q[0]===R.res) || ['', 'Custom'])[1].split(' ')[0]} frame`;
+  } else canvas.style.cssText = '';
+  VW = Math.max(1, w); VH = Math.max(1, h);
   renderer.setSize(VW, VH, false); composer.setSize(VW, VH);
   bloom.resolution.set(VW/2, VH/2);
   camera.aspect = VW/VH; camera.updateProjectionMatrix();
@@ -1717,7 +2039,10 @@ function resize(){
 new ResizeObserver(resize).observe(view2);
 let last = performance.now(), fpsAcc = 0, fpsN = 0, fpsShow = 60, ledT = 0;
 function renderFrame(){
+  if (rendering) return;
   const cam = activeCam();
+  setupEffects(cam);
+  if (envDirty || fxFrame % 30 === 0) updateEnv();
   if (S.onAir){ cam.aspect = VW/VH; cam.updateProjectionMatrix(); }
   renderPass.camera = cam;
   const airDev = S.onAir ? getDev(S.onAir) : null; if (airDev && airDev.rt) airDev.rt.camHead.visible = false;
@@ -1726,13 +2051,13 @@ function renderFrame(){
   composer.render();
   const pv = $('#preview');
   const selCam = selected && selected.kind==='dev' && TYPE[getDev(selected.id)?.type]?.kind==='camera' ? getDev(selected.id) : null;
-  if (selCam && selCam.id !== S.onAir && selCam.rt){
+  if (selCam && selCam.id !== S.onAir && selCam.rt && !renderTab){
     pv.hidden = false; $('#previewLbl').textContent = 'PREVIEW · ' + selCam.name;
     const vr = view2.getBoundingClientRect(), r = pv.getBoundingClientRect();
     const x = r.left - vr.left, y = VH - (r.bottom - vr.top), w = r.width, h = r.height;
     const c = selCam.rt.cam; c.aspect = w/h; c.updateProjectionMatrix();
     renderer.setViewport(x,y,w,h); renderer.setScissor(x,y,w,h); renderer.setScissorTest(true);
-    renderer.autoClear = true; selCam.rt.camHead.visible = false; renderer.render(scene, c); selCam.rt.camHead.visible = true;
+    renderer.autoClear = true; selCam.rt.camHead.visible = false; renderer.toneMappingExposure = 1; renderer.render(scene, c); selCam.rt.camHead.visible = true;
     renderer.setScissorTest(false); renderer.setViewport(0,0,VW,VH);
   } else pv.hidden = true;
   if (airDev && airDev.rt) airDev.rt.camHead.visible = true;
@@ -1766,6 +2091,6 @@ if (!restored){ exampleRig(); syncTopUI(); }
 refreshCamBar(); renderCues(); renderInspector();
 if (restored) toast('Restored your last session from this browser.', 'ok');
 document.fonts && document.fonts.ready.then(() => { floorLabel.userData.redraw && floorLabel.userData.redraw(); });
-window.__planner = { S };
+window.__planner = { S, camera, controls };
 loop();
 </script>

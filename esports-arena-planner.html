@@ -258,9 +258,10 @@ const lerp = (a,b,k) => a + (b-a)*k;
 const hash = n => { const s = Math.sin(n*127.1)*43758.5453; return s - Math.floor(s); };
 
 /* ---------- toasts ---------- */
-function toast(msg, kind='info', ms){
+function toast(msg, kind='info', ms, action){
   const el = document.createElement('div'); el.className = 'toast ' + (kind==='err'?'err':kind==='ok'?'ok':'');
   el.textContent = msg; $('#toasts').appendChild(el);
+  if (action){ const b = document.createElement('button'); b.textContent = action.label; b.style.marginLeft = '10px'; b.onclick = () => { el.remove(); action.fn(); }; el.appendChild(b); }
   setTimeout(()=>el.remove(), ms || (kind==='err' ? 11000 : 4500));
 }
 
@@ -1186,7 +1187,9 @@ async function parseModel(main, files, missing){
   }
   throw new Error('Unsupported file type: ' + e);
 }
-function guessUnits(maxDim){ if (maxDim > 3000) return 'mm'; if (maxDim > 250) return 'cm'; return 'm'; }
+function guessUnits(maxDim){ // pick the unit that gives a believable stage/set size (3–200 m), most common first
+  for (const u of ['m','cm','mm']){ const v = maxDim*UNIT[u]; if (v >= 3 && v <= 200) return u; }
+  if (maxDim*UNIT.m < 3) return 'm'; return 'mm'; }
 
 async function importFiles(fileList, fromProject=null){
   if (!fileList || !fileList.length) return;
@@ -1218,6 +1221,8 @@ async function importFiles(fileList, fromProject=null){
       toast(`Imported ${main.name}: ${sz.x.toFixed(1)} × ${sz.z.toFixed(1)} × ${sz.y.toFixed(1)} m (W × D × H), units ${m.rt.unitsUsed}. Check the size in the inspector.`, 'ok', 7000);
       if (missing.size) toast(`Some textures were not found: ${[...missing].slice(0,6).join(', ')}${missing.size>6?'…':''}. Select the texture files together with the model, or import the whole folder.`, 'err', 14000);
       if (S.placeholder && !fromProject){ S.placeholder = false; $('#placeholder').checked = false; applyVenue(); }
+      if (!fromProject && S.autoRigOnImport !== false && S.models.filter(x => x.rt).length === 1) setTimeout(() => autoRig(m, { replace:true }), 50);
+      else if (!fromProject && S.autoRigOnImport !== false) toast(`Added ${m.name}. To light it, select it and click Build rig for this stage.`, 'info', 8000);
       markDirty();
     } catch(err){
       console.error(err);
@@ -1588,6 +1593,18 @@ function renderModelInspector(m){
     el('button', { on:{ click:() => { const b = new THREE.Box3().setFromObject(m.rt.g); m.pos[2] += (-HD + 1) - b.min.z; m.pos[0] = 0; applyModelTransform(m); refreshInspectorValues(); } } }, 'Move to stage end'),
     el('button', { on:{ click:() => { m.rotX = m.rotY = m.rotZ = 0; m.scale = [1,1,1]; applyModelTransform(m); renderInspector(); } } }, 'Reset rotation & scale')));
 
+  insp.append(el('h3', {}, 'Auto rig'));
+  insp.append(el('p', { class:'note' }, 'Builds trusses and lights to fit this stage: trim heights clear the deck and any LED walls or set pieces. Rebuild after you move, rotate or scale the stage. The stage front should face the audience (south).'));
+  const szSel = el('select', { id:'ar_size', on:{ change:e => { S.autoRigSize = e.target.value; markDirty(); } } });
+  for (const [k, l] of Object.entries(AUTO_SIZES)) szSel.append(el('option', { value:k, selected:(S.autoRigSize||'standard')===k }, l));
+  insp.append(el('div', { class:'row' }, el('label', { for:'ar_size' }, 'Rig size'), szSel));
+  insp.append(el('div', { class:'row' }, el('label', { for:'ar_rep' }, 'Replace other lights'), el('input', { type:'checkbox', id:'ar_rep', checked:S.autoRigReplace !== false, on:{ change:e => { S.autoRigReplace = e.target.checked; markDirty(); } } })));
+  insp.append(el('div', { class:'row' }, el('label', { for:'ar_auto' }, 'Rig on import'), el('input', { type:'checkbox', id:'ar_auto', checked:S.autoRigOnImport !== false, on:{ change:e => { S.autoRigOnImport = e.target.checked; markDirty(); } } })));
+  const nAuto = S.devices.filter(d => d.auto===m.id).length;
+  insp.append(el('div', { class:'btns' },
+    el('button', { class:'primary', on:{ click:() => autoRig(m, { size:S.autoRigSize||'standard', replace:S.autoRigReplace !== false }) } }, nAuto ? 'Rebuild rig for this stage' : 'Build rig for this stage'),
+    nAuto ? el('button', { on:{ click:() => { const drop = S.devices.filter(d => d.auto===m.id); tc.detach(); drop.forEach(disposeDevice); S.devices = S.devices.filter(d => !drop.includes(d)); refreshCamBar(); renderInspector(); markDirty(); toast(`Removed ${drop.length} auto-rigged items.`); } } }, `Remove auto rig (${nAuto})`) : null));
+  insp.append(el('p', { class:'note' }, 'Compact: front and back truss. Standard: adds mid and side trusses, strobes and pyro. Festival: denser, adds an audience truss and lasers. Every truss and light stays editable.'));
   insp.append(el('h3', {}, `Textures · ${m.rt.mats.length} surface${m.rt.mats.length===1?'':'s'}`));
   insp.append(el('p', { class:'note' }, 'Put a JPEG/PNG image or an MP4 video on any surface, for example the LED screens in your stage. Click Pick surface, then click the screen in the 3D view.'));
   insp.append(el('div', { class:'btns' },
@@ -2075,9 +2092,9 @@ function serialize(withFiles){
   return (async () => ({
     app:'esports-arena-planner', version:1,
     gobos:S.gobos||[],
-    settings:{ eventName:S.eventName, teamA:S.teamA, teamB:S.teamB, mode:S.mode, dimmer:S.dimmer, haze:S.haze, glow:S.glow, behind:S.behind, placeholder:S.placeholder },
+    settings:{ eventName:S.eventName, teamA:S.teamA, teamB:S.teamB, mode:S.mode, dimmer:S.dimmer, haze:S.haze, glow:S.glow, behind:S.behind, placeholder:S.placeholder, autoRigSize:S.autoRigSize, autoRigReplace:S.autoRigReplace, autoRigOnImport:S.autoRigOnImport },
     nextId:S.nextId,
-    devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, p:d.p })),
+    devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, auto:d.auto, p:d.p })),
     cues:S.cues,
     models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1], matp:m.matp||{},
       files: await Promise.all((m.files||[]).map(async f => ({ name:f.name, data:b64(await f.arrayBuffer()) }))),
@@ -2120,6 +2137,92 @@ $('#bKit').onclick = () => {
 let dirtyT = null;
 function markDirty(){ clearTimeout(dirtyT); dirtyT = setTimeout(async () => { try { localStorage.setItem('arena-planner-v1', JSON.stringify(await serialize(false))); } catch {} }, 600); }
 
+/* ---------- auto rig: trusses + lights sized to an imported stage ---------- */
+const AUTO_SIZES = { compact:'Compact', standard:'Standard', festival:'Festival' };
+function stageInfo(m){
+  m.rt.g.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(m.rt.g);
+  const W = b.max.x - b.min.x, D = b.max.z - b.min.z, cx = (b.min.x + b.max.x)/2, cz = (b.min.z + b.max.z)/2;
+  const topAt = (x, z) => { ray.set(V3(x, b.max.y + 5, z), V3(0,-1,0)); ray.far = b.max.y + 10; const h = ray.intersectObject(m.rt.g, true)[0]; ray.far = Infinity; return h ? h.point.y : 0; };
+  // deck height: most common surface height across the front half of the stage
+  // probe both sides of every face: exported models often have flipped faces
+  const sides = []; m.rt.g.traverse(o => { if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach(mt => { sides.push([mt, mt.side]); mt.side = THREE.DoubleSide; }); });
+  const samples = []; for (let i=1;i<=7;i++) for (const f of [0.15, 0.3, 0.45]) samples.push(topAt(b.min.x + W*i/8, b.max.z - D*f));
+  samples.sort((a,b) => a-b); const deckY = clamp(samples[Math.floor(samples.length/2)], 0, 4);
+  sides.forEach(([mt, sd]) => mt.side = sd);
+  // tallest point of the model in every 25 cm depth slice (catches thin LED walls and set pieces) so trusses clear them
+  const BIN = 0.25, nb = Math.max(1, Math.ceil(D/BIN) + 1), tops = new Float32Array(nb).fill(-Infinity), v = V3();
+  m.rt.g.traverse(o => { if (!o.isMesh || !o.geometry.attributes.position) return; const pa = o.geometry.attributes.position, mw = o.matrixWorld;
+    for (let i=0;i<pa.count;i++){ v.fromBufferAttribute(pa, i).applyMatrix4(mw); const k = Math.floor((v.z - b.min.z)/BIN); if (k >= 0 && k < nb && v.y > tops[k]) tops[k] = v.y; } });
+  const bandTop = z0 => { let t = deckY; for (let k=0;k<nb;k++){ const z = b.min.z + (k+0.5)*BIN; if (Math.abs(z - z0) <= 1.5 && tops[k] > t) t = tops[k]; } return t; };
+  return { box:b, W, D, cx, cz, deckY, frontZ:b.max.z, backZ:b.min.z, top:b.max.y, bandTop };
+}
+function autoRig(m, opts = {}){
+  const size = opts.size || S.autoRigSize || 'standard';
+  const replace = opts.replace !== undefined ? opts.replace : true;
+  if (!m || !m.rt) return;
+  const before = { devices: S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:[...d.pos], mount:d.mount, auto:d.auto, p:JSON.parse(JSON.stringify(d.p)) })), cues: JSON.parse(JSON.stringify(S.cues)), onAir:S.onAir };
+  // remove the old rig: earlier auto rig for this model, or (replace) every truss and light
+  const drop = S.devices.filter(d => d.auto===m.id || (replace && (d.type==='truss' || TYPE[d.type].kind==='light')));
+  tc.detach(); drop.forEach(disposeDevice); S.devices = S.devices.filter(d => !drop.includes(d));
+  const I = stageInfo(m), dens = { compact:4.2, standard:3.0, festival:2.2 }[size];
+  const snap = v => Math.round(v*2)/2;
+  const added = [];
+  const truss = (x, y, z, L, rotY=0, name) => { const d = addDevice('truss', V3(x, y, z), { name, p:{ length:snap(Math.max(2, L)), rotY } }); d.auto = m.id; added.push(d); return d; };
+  const along = (tr, n, fn) => { const L = tr.p.length, r = tr.p.rotY*DEG; for (let i=0;i<n;i++){ const f = n===1 ? 0 : (i/(n-1) - 0.5)*(L - 1.2);
+      const x = tr.pos[0] + Math.cos(r)*f, z = tr.pos[2] - Math.sin(r)*f; fn(x, tr.pos[1] - 0.45, z, i, n); } };
+  const hang = (type, x, y, z, p={}) => { const d = addDevice(type, V3(x, y, z), { mount:'hung', p }); d.auto = m.id; added.push(d); return d; };
+  const floor = (type, x, y, z, p={}) => { const d = addDevice(type, V3(x, y, z), { p }); d.auto = m.id; added.push(d); return d; };
+  const playY = I.deckY + 1.2;                       // where performers are
+  const minTrim = I.deckY + (size==='compact' ? 6.5 : size==='festival' ? 8.5 : 7.5);
+  const wid = I.W + 2;
+  // FRONT truss: just downstage of the stage edge
+  const frontY = Math.max(minTrim, I.bandTop(I.frontZ) + 1.5);
+  const fT = truss(I.cx, frontY, I.frontZ + 1.2, wid, 0, 'Front truss');
+  along(fT, Math.max(4, Math.round(fT.p.length/dens)), (x,y,z,i) => {
+    if (i % 2 === 0 || size==='compact'){ const d = hang('moving', x, y, z, { color:'#3f9dff', angle:9 }); aimLight(d, V3(x*0.6 + I.cx*0.4, playY, I.frontZ - I.D*0.3)); }
+    else { const d = hang('wash', x, y, z, { color:'#7a3cff', angle:36 }); aimLight(d, V3(x, I.deckY, I.frontZ - I.D*0.25)); } });
+  // MID truss over the playing area (skipped on shallow stages)
+  if (I.D > 7){
+    const midZ = I.frontZ - I.D*0.45, midY = Math.max(minTrim + 0.8, I.bandTop(midZ) + 1.5);
+    const mT = truss(I.cx, midY, midZ, wid - 1, 0, 'Mid truss');
+    along(mT, Math.max(3, Math.round(mT.p.length/(dens*1.2))), (x,y,z) => { const d = hang('wash', x, y, z, { color:'#2a4dff', angle:40 }); aimLight(d, V3(x, I.deckY, midZ + 0.5)); });
+  }
+  // BACK truss: above the tallest set piece / LED wall
+  const backZ = I.backZ + Math.min(2, I.D*0.15), backY = Math.max(minTrim + 1.5, I.bandTop(backZ) + 1.2);
+  const bT = truss(I.cx, backY, backZ, wid, 0, 'Back truss');
+  along(bT, Math.max(4, Math.round(bT.p.length/dens)), (x,y,z,i,n) => {
+    if (size!=='compact' && (i===0 || i===n-1)) { const d = hang('strobe', x, y, z); aimLight(d, V3(x*0.5, playY, I.frontZ + 10)); return; }
+    const d = hang('moving', x, y, z, { color:'#ffffff', angle:5, effect:'none' }); d.p.pan = 180; d.p.tilt = 55; });
+  if (size==='festival'){ for (const f of [-0.22, 0.22]) hang('laser', I.cx + f*I.W, backY - 0.45, backZ, { pan:180, tilt:82, pattern:'fan', color:'#2bff7a' }); }
+  // SIDE trusses (standard and festival): side light into the playing area
+  if (size!=='compact' && I.D > 5){
+    const sideY = Math.max(minTrim, frontY), sideL = I.D + 1;
+    for (const sx of [-1, 1]){
+      const x = sx < 0 ? I.box.min.x - 1.2 : I.box.max.x + 1.2;
+      const sT = truss(x, sideY, I.cz, sideL, 90, sx < 0 ? 'Stage-right truss' : 'Stage-left truss');
+      along(sT, Math.max(2, Math.round(sideL/(dens*1.5))), (lx,y,lz) => { const d = hang('wash', lx, y, lz, { color:'#ff4fd8', angle:30 }); aimLight(d, V3(I.cx, playY, lz)); });
+    }
+  }
+  // AUDIENCE truss (festival): key light and audience beams
+  if (size==='festival'){
+    const aT = truss(I.cx, frontY + 2, I.frontZ + 14, wid + 6, 0, 'Audience truss');
+    along(aT, Math.max(4, Math.round(aT.p.length/5)), (x,y,z) => { const d = hang('moving', x, y, z, { color:'#fff1dc', angle:12 }); aimLight(d, V3(x*0.4, playY, I.frontZ - I.D*0.35)); });
+  }
+  // stage-front floor package: blinders and pyro on the lip
+  const lipZ = I.frontZ - 0.5, nTon = size==='compact' ? 2 : size==='festival' ? 6 : 4;
+  for (let i=0;i<nTon;i++){ const x = I.cx + (i/(nTon-1) - 0.5)*I.W*0.8; const d = floor('toner', x, I.deckY, lipZ); aimLight(d, V3(x*2, 6, HD + 8)); }
+  if (size!=='compact') for (const f of [-0.42, -0.14, 0.14, 0.42]) floor('pyro', I.cx + f*I.W, I.deckY, lipZ - 0.3, { style: Math.abs(f) > 0.3 ? 'flame jet' : 'fountain', height: Math.abs(f) > 0.3 ? 5 : 7 });
+  buildDemoCues({ deckY:I.deckY, focusZ:I.frontZ - I.D*0.35, frontZ:I.frontZ });
+  refreshCamBar(); renderCues(); markDirty();
+  const nT = added.filter(d => d.type==='truss').length, nL = added.length - nT;
+  const undo = () => { tc.detach(); S.devices.forEach(disposeDevice); S.devices = []; for (const d of before.devices){ const nd = { ...d, p:{ ...TYPE[d.type].d, ...d.p } }; S.devices.push(nd); buildDevice(nd); }
+    S.cues = before.cues; PB.idx = -1; setOnAir(null); refreshCamBar(); renderCues(); renderInspector(); markDirty(); toast('Auto rig undone.'); };
+  toast(`Auto rig (${AUTO_SIZES[size]}): ${nT} trusses and ${nL} lights fitted to ${m.name} (${I.W.toFixed(1)} × ${I.D.toFixed(1)} m, deck ${I.deckY.toFixed(2)} m). Show cues were rebuilt for the new rig.`, 'ok', 12000, { label:'Undo', fn:undo });
+  renderInspector();
+  return added;
+}
+
 /* ---------- example rig ---------- */
 function exampleRig(){
   const tr = (x,y,z,L,r=0) => addDevice('truss', V3(x,y,z), { p:{ length:L, rotY:r } });
@@ -2138,7 +2241,11 @@ function exampleRig(){
   const c2 = addDevice('cam_jib', V3(-13, 0, -21), { name:'CAM 2 · Jib', p:{ arm:8, swing:35, elev:22, focal:20 } }); aimCam(c2, V3(0, 3, -HD+10));
   const c3 = addDevice('cam_ptz', V3(-17, DECK_H, -HD+4), { name:'CAM 3 · Player PTZ', p:{ height:2.2, focal:30 } }); aimCam(c3, V3(-7.5, DECK_H+1.2, -HD+9.4));
   const c4 = addDevice('cam_steadi', V3(7, 0, -20), { name:'CAM 4 · Steadicam', p:{ focal:24 } }); aimCam(c4, V3(0, DECK_H+2, -HD+10));
-  // cues
+  buildDemoCues();
+}
+function buildDemoCues(info = { deckY:DECK_H, focusZ:-HD+9.5, frontZ:SF }){
+  S.cues = []; PB.idx = -1;
+  const [c1, c2, c3, c4] = camDevices();
   const L = t => S.devices.filter(d => d.type===t);
   const mh = L('moving'), wash = L('wash'), strobe = L('strobe'), stad = L('stadium'), toner = L('toner'), mtx = L('matrix'), las = L('laser');
   const set = (list, p) => list.forEach((d,i) => Object.assign(d.p, typeof p==='function' ? p(d,i) : p));
@@ -2153,16 +2260,16 @@ function exampleRig(){
   rec('Countdown', 5, 1, c2, false);
   set(mh, (d,i) => ({ color:'#ffffff', effect:'ballyhoo', speed:1.6, phase:i/14 })); set(wash, { color:'#ffffff', effect:'none' }); set(strobe, { on:true, intensity:1, effect:'flash', rate:10 });
   set(toner, { on:true, intensity:1, effect:'chase' }); set(mtx, { pattern:'sparkle', color:'#ffffff', color2:'#ffd080' }); set(las, { color:'#2bff7a', pattern:'fan', speed:1 });
-  rec('Team intro hit', 5, 0, c4, true);
-  set(mh, (d,i) => ({ color: d.pos[0] < 0 ? '#3fb8ff' : '#ff7a3d', effect:'none', intensity:.8 })); mh.slice(0,10).forEach(d => aimLight(d, V3(d.pos[0]*0.55, DECK_H+1, -HD+9.5)));
+  rec('Team intro hit', 5, 0, c4 || c1, true);
+  set(mh, (d,i) => ({ color: d.pos[0] < 0 ? '#3fb8ff' : '#ff7a3d', effect:'none', intensity:.8 })); const front = mh.filter(d => d.pos[2] > info.focusZ && d.pos[2] < info.frontZ + 6); front.forEach(d => aimLight(d, V3(d.pos[0]*0.55, info.deckY+1, info.focusZ)));
   set(wash, d => ({ color: d.pos[0] < 0 ? '#1d7dff' : '#ff6a1d', effect:'none', intensity:.85 })); set(strobe, { on:false }); set(stad, { on:true, intensity:.7 }); set(toner, { on:false });
   set(mtx, { pattern:'rings', color:'#3fb8ff', color2:'#ff7a3d' }); set(las, { on:false });
-  rec('Match live', 8, 2, c3, false);
-  set(mh, (d,i) => ({ effect:'colour cycle', speed:1.2, phase:i/14, intensity:1 })); mh.slice(0,10).forEach(d => { d.p.tilt = 30; d.p.pan = 0; }); set(wash, (d,i) => ({ effect:'colour cycle', phase:i/6 }));
+  rec('Match live', 8, 2, c3 || c1, false);
+  set(mh, (d,i) => ({ effect:'colour cycle', speed:1.2, phase:i/14, intensity:1 })); front.forEach(d => { d.p.tilt = 30; d.p.pan = 0; }); set(wash, (d,i) => ({ effect:'colour cycle', phase:i/6 }));
   set(strobe, { on:true, effect:'random', rate:8 }); set(stad, { on:false }); set(toner, { on:true, effect:'warm pulse', intensity:1 }); set(las, { on:true, pattern:'scan', color:'#2bd0ff', speed:1.4 });
   set(mtx, { pattern:'sparkle', color:'#ffd040', color2:'#ff40d0' });
   rec('Victory', 8, 0.5, c2, true);
-  PB.idx = -1; applyLook(S.cues[0].look, 0); syncTopUI(); setMode('show');
+  PB.idx = -1; if (S.cues[0]) applyLook(S.cues[0].look, 0); syncTopUI(); setMode('show');
   refreshCamBar(); renderCues(); renderInspector();
 }
 

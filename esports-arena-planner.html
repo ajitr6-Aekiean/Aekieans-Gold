@@ -232,7 +232,6 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -307,15 +306,29 @@ tc.getRaycaster().layers.enableAll();
 scene.add(tc);
 tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value && !S.onAir; });
 tc.addEventListener('objectChange', onGizmoMove);
-tc.addEventListener('mouseUp', () => { refreshInspectorValues(); markDirty(); });
+tc.addEventListener('mouseUp', () => {
+  if (selected && selected.kind==='dev'){ const d = getDev(selected.id);
+    if (d && TYPE[d.type].kind==='light' && d.type!=='pyro' && !d.parent){
+      for (const tr of S.devices.filter(t => t.type==='truss' && t.rt)){ tr.rt.g.updateMatrixWorld(true); const l = tr.rt.g.worldToLocal(V3(...d.pos));
+        if (Math.abs(l.z) < 0.8 && l.y < 0.3 && l.y > -1.5 && Math.abs(l.x) < tr.p.length/2 + 0.3){
+          l.y = -0.45; l.z = 0; d.pos = tr.rt.g.localToWorld(l.clone()).toArray(); if (d.mount !== 'hung'){ d.mount = 'hung'; rebuild(d); } else d.rt.g.position.fromArray(d.pos);
+          attachToTruss(d, tr); toast(`${d.name} is now hung on ${tr.name} and will move with it.`, 'ok'); renderInspector(); break; } } }
+    if (d && d.parent) { const tr = getDev(d.parent); if (tr) attachToTruss(d, tr); }
+  }
+  refreshInspectorValues(); markDirty(); });
 
 const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
 const bloom = new UnrealBloomPass(new THREE.Vector2(512,512), 0.7, 0.55, 0.72);
 const aoCam = new THREE.PerspectiveCamera();
 const gtao = new GTAOPass(scene, aoCam, 512, 512); gtao.enabled = false; gtao.blendIntensity = 1;
+gtao.updateGtaoMaterial({ radius:1.2, distanceExponent:1.5, thickness:1.5, scale:1, samples:16 }); gtao.updatePdMaterial({ radius:6, samples:16 });
 const bokeh = new BokehPass(scene, aoCam, { focus:30, aperture:0.0004, maxblur:0.012 }); bokeh.enabled = false;
-const vignette = new ShaderPass(VignetteShader); vignette.uniforms.offset.value = 0.95; vignette.uniforms.darkness.value = 0.85; vignette.enabled = false;
+// lens vignette that only darkens (the stock one blends edges toward grey, which washed renders out)
+const vignette = new ShaderPass({ uniforms:{ tDiffuse:{ value:null }, amount:{ value:0.55 } },
+  vertexShader:'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+  fragmentShader:'uniform sampler2D tDiffuse; uniform float amount; varying vec2 vUv; void main(){ vec4 t = texture2D(tDiffuse, vUv); vec2 d = (vUv - 0.5)*vec2(1.6, 1.25); float v = 1.0 - amount*smoothstep(0.35, 1.15, length(d)); gl_FragColor = vec4(t.rgb*v, t.a); }' });
+vignette.enabled = false;
 composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bokeh); composer.addPass(bloom); composer.addPass(vignette); composer.addPass(new OutputPass());
 
 const hemi = new THREE.HemisphereLight(0xcfd8ff, 0x20242c, 0.05); scene.add(hemi);
@@ -555,7 +568,7 @@ const trussMat = new THREE.MeshStandardMaterial({ color:0xa4adb8, roughness:.35,
 const beamVS = `varying vec3 vWorld;
 void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vWorld = wp.xyz; gl_Position = projectionMatrix*viewMatrix*wp; }`;
 const beamFS = `uniform vec3 uColor; uniform float uAlpha; uniform mat4 uInv; uniform mat4 uModel; uniform vec3 uScale; uniform float uTime;
-uniform sampler2D uGobo; uniform float uUseGobo; uniform float uGoboRot; uniform float uSoft; uniform int uSteps; uniform float uHaze;
+uniform sampler2D uGobo; uniform float uUseGobo; uniform float uGoboRot; uniform float uSoft; uniform int uSteps; uniform float uHaze; uniform float uJit;
 varying vec3 vWorld;
 float h31(vec3 p){ p = fract(p*0.3183099 + 0.1); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
 float vnoise(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
@@ -567,7 +580,7 @@ void main(){
   if (abs(rd.y) > 1e-6){ float ta = -ro.y/rd.y, tb = (-1.0-ro.y)/rd.y; t0 = max(t0, min(ta,tb)); t1 = min(t1, max(ta,tb)); }
   if (t1 <= t0) discard;
   float worldLen = length(mat3(uModel)*rd);
-  float dt = (t1-t0)/float(uSteps); float jit = 0.5 + (fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5)*0.35;
+  float dt = (t1-t0)/float(uSteps); float jit = fract(0.5 + (fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5)*0.35 + uJit);
   float acc = 0.0; float ca = cos(uGoboRot), sa = sin(uGoboRot);
   for (int i=0; i<64; i++){
     if (i >= uSteps) break;
@@ -592,13 +605,13 @@ void main(){
 }`;
 const coneGeo = new THREE.ConeGeometry(1, 1, 40, 1, true); coneGeo.translate(0, -0.5, 0);
 const blackTex = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1); blackTex.needsUpdate = true;
-let beamSteps = 28;
+let beamSteps = 28, beamJit = 0;
 function beamMesh(){
   const u = { uColor:{value:new THREE.Color()}, uAlpha:{value:0}, uInv:{value:new THREE.Matrix4()}, uModel:{value:new THREE.Matrix4()}, uScale:{value:V3(1,1,1)},
-    uTime:{value:0}, uGobo:{value:blackTex}, uUseGobo:{value:0}, uGoboRot:{value:0}, uSoft:{value:0.35}, uSteps:{value:28}, uHaze:{value:0.6} };
+    uTime:{value:0}, uGobo:{value:blackTex}, uUseGobo:{value:0}, uGoboRot:{value:0}, uSoft:{value:0.35}, uSteps:{value:28}, uHaze:{value:0.6}, uJit:{value:0} };
   const m = new THREE.Mesh(coneGeo, new THREE.ShaderMaterial({ vertexShader:beamVS, fragmentShader:beamFS, uniforms:u,
     transparent:true, depthWrite:false, blending:THREE.CustomBlending, blendSrc:THREE.OneFactor, blendDst:THREE.OneFactor, blendEquation:THREE.AddEquation, side:THREE.BackSide, fog:false }));
-  m.onBeforeRender = () => { u.uModel.value.copy(m.matrixWorld); u.uInv.value.copy(m.matrixWorld).invert(); u.uSteps.value = beamSteps; };
+  m.onBeforeRender = () => { u.uModel.value.copy(m.matrixWorld); u.uInv.value.copy(m.matrixWorld).invert(); u.uSteps.value = beamSteps; u.uJit.value = beamJit; };
   m.raycast = ()=>{}; m.frustumCulled = false; m.layers.set(2); return m;
 }
 // lens glow (the bright hotspot you see looking into a fixture)
@@ -675,7 +688,7 @@ function uploadGobo(file, applyTo){
 const laserGeo = new THREE.BoxGeometry(0.025, 1, 0.025); laserGeo.translate(0, -0.5, 0);
 
 /* light pool: only 16 real lights for speed */
-const POOL = 16, pool = [];
+const POOL = 24, pool = [];
 for (let i=0;i<POOL;i++){ const l = new THREE.SpotLight(0xffffff, 0, 0, 0.3, 0.45, 2); scene.add(l); scene.add(l.target); pool.push(l); }
 const pyroLights = []; for (let i=0;i<4;i++){ const l = new THREE.PointLight(0xff8a30, 0, 40, 2); scene.add(l); pyroLights.push(l); }
 
@@ -933,6 +946,25 @@ function addDevice(type, pos, extra={}){
   S.devices.push(d); buildDevice(d); return d;
 }
 const getDev = id => S.devices.find(d => d.id===id);
+// Lights hung on a truss remember their spot in the truss's own frame, so they move and turn with it.
+function attachToTruss(d, tr){ tr.rt.g.updateMatrixWorld(true); d.parent = tr.id; d.local = tr.rt.g.worldToLocal(V3(...d.pos)).toArray(); }
+function trussChildren(tr){ return S.devices.filter(d => d.parent === tr.id); }
+function syncTrussChildren(tr, dRot = 0){
+  if (!tr.rt) return; tr.rt.g.updateMatrixWorld(true);
+  for (const d of trussChildren(tr)){
+    const w = tr.rt.g.localToWorld(V3(...d.local)); d.pos = w.toArray(); if (d.rt) d.rt.g.position.copy(w);
+    if (dRot && d.p.pan !== undefined){ let pn = +d.p.pan + dRot; while (pn > 180) pn -= 360; while (pn < -180) pn += 360; d.p.pan = Math.round(pn*10)/10; }
+  }
+}
+function inferTrussParents(){ // older projects: hook hung lights onto the truss they sit under
+  const trusses = S.devices.filter(t => t.type==='truss' && t.rt);
+  for (const d of S.devices){
+    if (d.parent && getDev(d.parent)) continue; d.parent = null;
+    if (d.mount !== 'hung' || TYPE[d.type].kind !== 'light') continue;
+    for (const tr of trusses){ tr.rt.g.updateMatrixWorld(true); const l = tr.rt.g.worldToLocal(V3(...d.pos));
+      if (Math.abs(l.z) < 0.6 && l.y < 0 && l.y > -1.2 && Math.abs(l.x) < tr.p.length/2 + 1.2){ attachToTruss(d, tr); break; } }
+  }
+}
 
 /* aim helpers */
 function headPos(d, out=V3()){ out.set(d.pos[0], d.pos[1], d.pos[2]); if (d.type!=='pyro') out.y += d.rt && d.rt.pivotH !== undefined ? d.rt.pivotH : (d.mount==='hung'?-0.38:0.38); return out; }
@@ -1043,7 +1075,7 @@ function updateLights(t, dt){
   }
   cand.sort((a,b) => TYPE[a.d.type].pri - TYPE[b.d.type].pri || a.d.id - b.d.id);
   for (let i=0;i<POOL;i++){
-    const l = pool[i], c = i < PERF.lights ? cand[i] : null;
+    const l = pool[i], c = i < (rendering ? POOL : PERF.lights) ? cand[i] : null;
     if (!c){ l.intensity = 0; if (l.map) l.map = null; continue; }
     l.position.copy(c.hp); l.target.position.copy(c.hp).addScaledVector(c.dir, 10); l.target.updateMatrixWorld();
     l.color.copy(c.col); const gt = c.d.rt.goboTex || null;
@@ -1053,7 +1085,7 @@ function updateLights(t, dt){
       l.shadow.camera.up.copy(az.multiplyScalar(Math.cos(a))).addScaledVector(ax, Math.sin(a) * (c.d.p.goboFlip ? -1 : 1)); }
     l.intensity = TYPE[c.d.type].base * c.out * (gt ? 1.6 : 1);
   }
-  realUsed = Math.min(PERF.lights, cand.length); realWanted = cand.length;
+  realUsed = Math.min(rendering ? POOL : PERF.lights, cand.length); realWanted = cand.length;
 }
 let realUsed = 0, realWanted = 0;
 
@@ -1267,8 +1299,7 @@ async function importFiles(fileList, fromProject=null){
   toast(`Imported ${newModels.length > 1 ? newModels.length + ' parts' : newModels[0].name}: ${sz.x.toFixed(1)} × ${sz.z.toFixed(1)} × ${sz.y.toFixed(1)} m (W × D × H), units ${newModels[0].rt.unitsUsed}. Check the size in the inspector.`, 'ok', 8000);
   if (S.placeholder){ S.placeholder = false; $('#placeholder').checked = false; applyVenue(); }
   const firstStage = S.models.filter(x => x.rt).length === newModels.length;
-  if (S.autoRigOnImport !== false && firstStage) setTimeout(() => autoRig(null, { replace: S.autoRigReplace !== false, orient:true }), 60);
-  else if (S.autoRigOnImport !== false) toast(`Added ${newModels.map(x => x.name).join(', ')}. Click Build rig for this stage to re-fit the rig to everything you've imported.`, 'info', 9000);
+  if (firstStage) toast('Add trusses from Rigging, then pick a light and click a truss to hang it. Lights move with their truss.', 'info', 9000);
   markDirty();
 }
 function stageModels(){ return S.models.filter(x => x.rt && x.visible !== false); }
@@ -1476,6 +1507,7 @@ function placeAt(keep){
   } else if (trussId){ pos.y = 0; }
   if (placing==='truss'){ pos.y = Math.max(pos.y, 0) + 10; }
   const d = addDevice(placing, pos, extra);
+  if (extra.mount==='hung' && trussId) attachToTruss(d, getDev(trussId));
   if (T.kind==='light'){
     if (placing==='stadium') aimLight(d, STAGE_C);
     else if (placing==='toner') aimLight(d, V3(pos.x*0.5, 6, HD + 8));
@@ -1505,7 +1537,12 @@ function select(sel){
 function onGizmoMove(){
   const o = tc.object; if (!o || !selected) return;
   if (selected.kind==='dev'){ const d = getDev(selected.id); d.pos = [o.position.x, o.position.y, o.position.z];
-    if (d.type==='truss') { d.p.rotY = Math.round(o.rotation.y/DEG); }
+    if (d.type==='truss') { const nr = Math.round(o.rotation.y/DEG); const dr = nr - (+d.p.rotY||0); d.p.rotY = nr; syncTrussChildren(d, dr); }
+    else if (d.parent){ const tr = getDev(d.parent);
+      if (tr && tr.rt){ tr.rt.g.updateMatrixWorld(true); const l = tr.rt.g.worldToLocal(V3(...d.pos));
+        if (Math.abs(l.z) > 1.2 || l.y > 0.5 || l.y < -2 || Math.abs(l.x) > tr.p.length/2 + 1.5){ d.parent = null; toast(`${d.name} is no longer hung on ${tr.name}.`); }
+        else { l.z = 0; d.local = l.toArray(); } }
+      o.rotation.set(0,0,0); }
     else if (TYPE[d.type].kind==='camera' && tc.mode==='rotate'){ d.p.pan = +(d.p.pan + o.rotation.y/DEG).toFixed(1); o.rotation.set(0,0,0); }
     else o.rotation.set(0,0,0);
   } else if (selected.kind==='model'){ geoChanged(); const m = getModel(selected.id); m.pos = [o.position.x, o.position.y, o.position.z];
@@ -1561,11 +1598,17 @@ function renderDevInspector(d){
   const T = TYPE[d.type];
   insp.append(el('div', { class:'insp-head' }, el('span', { class:'tag' }, T.label), d.mount==='hung' ? el('span', { class:'note' }, 'hung on truss') : null));
   insp.append(el('div', { class:'row' }, el('label', { for:'dv_name' }, 'Name'), el('input', { type:'text', id:'dv_name', value:d.name, on:{ input:e => { d.name = e.target.value; refreshCamBar(); markDirty(); } } })));
-  insp.append(xyzRow(d.pos, (i, v) => { d.pos[i] = v; d.rt.g.position.fromArray(d.pos); markDirty(); }, 'dv_pos'));
+  insp.append(xyzRow(d.pos, (i, v) => { d.pos[i] = v; d.rt.g.position.fromArray(d.pos);
+    if (d.type==='truss') syncTrussChildren(d); else if (d.parent){ const tr = getDev(d.parent); if (tr) attachToTruss(d, tr); }
+    markDirty(); }, 'dv_pos'));
+  if (d.type==='truss'){ const kids = trussChildren(d); insp.append(el('p', { class:'note' }, kids.length ? `${kids.length} light${kids.length===1?'':'s'} hung on this truss. They move and turn with it.` : 'No lights on this truss yet. Pick a light type and click the truss to hang it here.')); }
+  if (d.parent){ const tr = getDev(d.parent); if (tr) insp.append(el('div', { class:'row' }, el('span', { class:'note', style:'flex:1' }, `Hung on ${tr.name}; moves with it.`), el('button', { on:{ click:() => { d.parent = null; toast(`${d.name} detached; it stays where it is.`); renderInspector(); markDirty(); } } }, 'Detach'))); }
   if (d.type==='truss') insp.append(el('p', { class:'note' }, `Trim height ${d.pos[1].toFixed(2)} m (${(d.pos[1]/FT).toFixed(1)} ft). Use Y to raise or lower.`));
+  d._lastRot = d.p.rotY;
   for (const f of schema(d.type)) insp.append(fieldRow(f, d.p, (k, v) => {
     d.p[k] = v; if (STRUCT.has(k)) rebuild(d);
-    if (k==='rotY' && d.rt) d.rt.g.rotation.y = v*DEG;
+    if (k==='rotY' && d.rt){ const dr = v - (d._lastRot ?? d.p.rotY); d.rt.g.rotation.y = v*DEG; syncTrussChildren(d, 0); for (const c of trussChildren(d)) if (c.p.pan !== undefined) c.p.pan = Math.round((((+c.p.pan + dr + 540) % 360) - 180)*10)/10; d._lastRot = v; }
+    if (k==='length' && d.type==='truss') syncTrussChildren(d);
     markDirty();
   }, 'dv'));
   const b = el('div', { class:'btns' });
@@ -1647,19 +1690,7 @@ function renderModelInspector(m){
     el('button', { on:{ click:() => { const b = new THREE.Box3().setFromObject(m.rt.g); m.pos[2] += (-HD + 1) - b.min.z; m.pos[0] = 0; applyModelTransform(m); refreshInspectorValues(); } } }, 'Move to stage end'),
     el('button', { on:{ click:() => { m.rotX = m.rotY = m.rotZ = 0; m.scale = [1,1,1]; applyModelTransform(m); renderInspector(); } } }, 'Reset rotation & scale')));
 
-  insp.append(el('h3', {}, 'Auto rig'));
-  insp.append(el('p', { class:'note' }, 'Builds trusses and lights around everything you imported (all parts together). Trim heights clear the deck and any LED walls or set pieces. On import it also stands the stage up and turns its front to the audience if needed. Rebuild after you move, rotate or scale the stage.'));
-  const szSel = el('select', { id:'ar_size', on:{ change:e => { S.autoRigSize = e.target.value; markDirty(); } } });
-  for (const [k, l] of Object.entries(AUTO_SIZES)) szSel.append(el('option', { value:k, selected:(S.autoRigSize||'standard')===k }, l));
-  insp.append(el('div', { class:'row' }, el('label', { for:'ar_size' }, 'Rig size'), szSel));
-  insp.append(el('div', { class:'row' }, el('label', { for:'ar_rep' }, 'Replace other lights'), el('input', { type:'checkbox', id:'ar_rep', checked:S.autoRigReplace !== false, on:{ change:e => { S.autoRigReplace = e.target.checked; markDirty(); } } })));
-  insp.append(el('div', { class:'row' }, el('label', { for:'ar_auto' }, 'Rig on import'), el('input', { type:'checkbox', id:'ar_auto', checked:S.autoRigOnImport !== false, on:{ change:e => { S.autoRigOnImport = e.target.checked; markDirty(); } } })));
-  const nAuto = S.devices.filter(d => d.auto).length;
-  insp.append(el('div', { class:'btns' },
-    el('button', { class:'primary', on:{ click:() => autoRig(m, { size:S.autoRigSize||'standard', replace:S.autoRigReplace !== false }) } }, nAuto ? 'Rebuild rig for this stage' : 'Build rig for this stage'),
-    el('button', { title:'Stand the stage up if it came in lying down, and turn it so its front faces the audience', on:{ click:() => { const notes = orientStage(stageModels()); toast(notes.length ? 'I ' + notes.join(' and ') + '. Click Rebuild rig to re-fit the trusses.' : 'The stage already looks upright and facing the audience.', 'ok', 9000); renderInspector(); } } }, 'Fix orientation'),
-    nAuto ? el('button', { on:{ click:() => { const drop = S.devices.filter(d => d.auto); tc.detach(); drop.forEach(disposeDevice); S.devices = S.devices.filter(d => !drop.includes(d)); refreshCamBar(); renderInspector(); markDirty(); toast(`Removed ${drop.length} auto-rigged items.`); } } }, `Remove auto rig (${nAuto})`) : null));
-  insp.append(el('p', { class:'note' }, 'Compact: front and back truss. Standard: adds mid and side trusses, strobes and pyro. Festival: denser, adds an audience truss and lasers. Every truss and light stays editable.'));
+  insp.append(el('div', { class:'btns' }, el('button', { title:'Stand the stage up if it came in lying down, and turn it so its front faces the audience', on:{ click:() => { const notes = orientStage(stageModels()); toast(notes.length ? 'I ' + notes.join(' and ') + '.' : 'The stage already looks upright and facing the audience.', 'ok', 9000); renderInspector(); } } }, 'Fix orientation')));
   insp.append(el('h3', {}, `Textures · ${m.rt.mats.length} surface${m.rt.mats.length===1?'':'s'}`));
   insp.append(el('p', { class:'note' }, 'Put a JPEG/PNG image or an MP4 video on any surface, for example the LED screens in your stage. Click Pick surface, then click the screen in the 3D view.'));
   insp.append(el('div', { class:'btns' },
@@ -1736,7 +1767,9 @@ function deleteSel(){
   if (selected.kind==='model') return removeModel(getModel(selected.id));
   if (selected.kind==='cue'){ S.cues = S.cues.filter(c => c.id!==selected.id); select(null); renderCues(); markDirty(); return; }
   const d = getDev(selected.id); if (!d) return;
-  tc.detach(); disposeDevice(d); S.devices = S.devices.filter(x => x!==d);
+  tc.detach(); const kids = d.type==='truss' ? trussChildren(d) : [];
+  kids.forEach(disposeDevice); disposeDevice(d); S.devices = S.devices.filter(x => x!==d && !kids.includes(x));
+  if (kids.length) toast(`Deleted ${d.name} and the ${kids.length} light${kids.length===1?'':'s'} hung on it.`);
   if (S.onAir===d.id) setOnAir(null);
   select(null); refreshCamBar(); markDirty();
 }
@@ -1744,6 +1777,8 @@ function duplicateSel(){
   if (!selected || selected.kind!=='dev') return; const d = getDev(selected.id);
   const off = d.type==='truss' ? V3(0,0,3) : V3(1.5,0,0);
   const n = addDevice(d.type, V3(...d.pos).add(off), { mount:d.mount, p:JSON.parse(JSON.stringify(d.p)) });
+  if (d.type==='truss'){ for (const c of trussChildren(d)){ const k = addDevice(c.type, V3(...c.pos).add(off), { mount:'hung', p:JSON.parse(JSON.stringify(c.p)) }); k.parent = n.id; k.local = [...c.local]; } }
+  else if (d.parent){ const tr = getDev(d.parent); if (tr) attachToTruss(n, tr); }
   select({ kind:'dev', id:n.id }); refreshCamBar(); markDirty();
 }
 
@@ -1762,6 +1797,21 @@ function camFromView(dev){
   if (!dev){ select({ kind:'dev', id:d.id }); toast(`Added ${d.name} at your current view. Adjust it in the inspector or press ${camDevices().indexOf(d)+1} to take it.`, 'ok'); }
   return d;
 }
+
+/* ---------- polished floor reflection (render tab) ---------- */
+import('three/addons/objects/Reflector.js').then(({ Reflector }) => {
+  const shader = { name:'FloorReflection', uniforms:{ color:{ value:null }, tDiffuse:{ value:null }, textureMatrix:{ value:null }, uStrength:{ value:0.2 }, uBlur:{ value:0.0025 } },
+    vertexShader:`uniform mat4 textureMatrix; varying vec4 vUv;
+void main(){ vUv = textureMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader:`uniform sampler2D tDiffuse; uniform float uStrength; uniform float uBlur; varying vec4 vUv;
+void main(){ vec2 uv = vUv.xy / vUv.w; vec3 c = texture2D(tDiffuse, uv).rgb * 0.36;
+  c += (texture2D(tDiffuse, uv + vec2(uBlur, 0.0)).rgb + texture2D(tDiffuse, uv - vec2(uBlur, 0.0)).rgb + texture2D(tDiffuse, uv + vec2(0.0, uBlur)).rgb + texture2D(tDiffuse, uv - vec2(0.0, uBlur)).rgb) * 0.16;
+  gl_FragColor = vec4(c * uStrength, 1.0); }` };
+  const r = new Reflector(new THREE.PlaneGeometry(FLOOR_W, FLOOR_D), { shader, textureWidth:1024, textureHeight:1024, clipBias:0.003, multisample:4 });
+  r.rotation.x = -Math.PI/2; r.position.y = 0.012; r.material.transparent = true; r.material.blending = THREE.AdditiveBlending; r.material.depthWrite = false;
+  r.camera.layers.set(0); r.camera.layers.enable(2); r.raycast = () => {}; r.visible = false; scene.add(r); floorReflector = r;
+}).catch(() => {});
+let floorReflector = null;
 
 /* ---------- render tab ---------- */
 let renderTab = false, envDirty = true, lastBlob = null, lastName = '';
@@ -1792,7 +1842,7 @@ function renderRenderPanel(){
     el('input', { type:'number', id:'rd_cw', value:R.cw, min:64, max:8192, style:'width:80px', on:{ change:e => upd('cw', +e.target.value) } }),
     el('input', { type:'number', id:'rd_ch', value:R.ch, min:64, max:8192, style:'width:80px', on:{ change:e => upd('ch', +e.target.value) } }))); }
   insp.append(fieldRow({ k:'quality', l:'Quality', t:'select', o:['draft','high','ultra'] }, R, upd, 'rd'));
-  const qs = document.getElementById('rd_quality'); [...qs.options].forEach(o => o.textContent = { draft:'Draft (fast)', high:'High (2× supersampled)', ultra:'Ultra (2×, sharper shadows)' }[o.value]);
+  const qs = document.getElementById('rd_quality'); [...qs.options].forEach(o => o.textContent = { draft:'Draft (fast preview)', high:'High (8 passes, smooth beams and edges)', ultra:'Ultra (16 passes, most shadows)' }[o.value]);
   const vs = el('select', { id:'rd_view', on:{ change:e => setOnAir(e.target.value ? +e.target.value : null) } });
   vs.append(el('option', { value:'' }, 'Free view (current)')); camDevices().forEach(d => vs.append(el('option', { value:d.id, selected:S.onAir===d.id }, d.name)));
   insp.append(el('div', { class:'row' }, el('label', { for:'rd_view' }, 'Shot from'), vs));
@@ -1802,7 +1852,7 @@ function renderRenderPanel(){
   insp.append(fieldRow({ k:'aoStrength', l:'AO strength', t:'range', min:0, max:1.5, step:.05 }, R, upd, 'rd'));
   insp.append(fieldRow({ k:'exposure', l:'Exposure', t:'range', min:.3, max:3, step:.05 }, R, upd, 'rd'));
   insp.append(fieldRow({ k:'env', l:'Reflections', t:'range', min:0, max:3, step:.05 }, R, upd, 'rd'));
-  insp.append(fieldRow({ k:'glossy', l:'Polished floor', t:'bool' }, R, upd, 'rd'));
+  insp.append(fieldRow({ k:'glossy', l:'Polished floor (reflections)', t:'bool' }, R, upd, 'rd'));
   insp.append(fieldRow({ k:'vignette', l:'Lens vignette', t:'bool' }, R, upd, 'rd'));
   insp.append(fieldRow({ k:'dof', l:'Depth of field', t:'bool' }, R, upd, 'rd'));
   if (R.dof){
@@ -1828,10 +1878,10 @@ function markShadows(){
   scene.traverse(o => { if (!o.isMesh) return; const fx = o.layers.mask === 4 || (o.material && o.material.blending === THREE.AdditiveBlending);
     if (fx){ o.castShadow = o.receiveShadow = false; return; } o.receiveShadow = true; o.castShadow = o !== seatMesh && o !== floor && o !== ground && !o.userData.guide; });
 }
-function setShadows(on, size=1024){
+function setShadows(on, size=1024, count=8){
   if (on !== shadowsOn){ shadowsOn = on; renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap; if (on) markShadows();
     scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
-  pool.forEach((l,i) => { const want = on && i < 8; if (l.castShadow !== want) l.castShadow = want;
+  pool.forEach((l,i) => { const want = on && i < count && l.visible; if (l.castShadow !== want) l.castShadow = want;
     if (l.shadow.mapSize.x !== size){ l.shadow.mapSize.set(size,size); if (l.shadow.map){ l.shadow.map.dispose(); l.shadow.map = null; } }
     l.shadow.bias = -0.0004; l.shadow.normalBias = 0.04; l.shadow.camera.near = 0.5; l.shadow.camera.far = 170; });
   shadowSize = size;
@@ -1844,10 +1894,12 @@ function setupEffects(cam, final=false){
   if (bokeh.enabled && (final || fxFrame % 10 === 0)){ bokeh.uniforms.focus.value = focusDistance(cam); }
   bokeh.uniforms.aperture.value = 0.0011 / R.fstop; bokeh.uniforms.maxblur.value = 0.014;
   vignette.enabled = renderTab && R.vignette;
+  bloom.radius = renderTab ? 0.32 : 0.55; bloom.threshold = renderTab ? 0.86 : 0.72;
   renderer.toneMappingExposure = renderTab ? R.exposure : 1;
-  setShadows(fx && R.shadows, final && R.quality==='ultra' ? 2048 : 1024);
+  setShadows(fx && R.shadows, final ? 2048 : 1024, final ? (R.quality==='ultra' ? 16 : R.quality==='high' ? 12 : 8) : 8);
   if (shadowsOn && (final || fxFrame % 90 === 0)) markShadows();
   const glossy = renderTab && R.glossy; floorMat.roughness = glossy ? .32 : .82; floorMat.metalness = glossy ? .15 : .05;
+  if (floorReflector){ floorReflector.visible = glossy && fx; if (glossy){ const rtg = floorReflector.getRenderTarget(); const w = Math.min(2048, Math.round(VW*PERF.scale*(final ? 1 : 0.5))), h = Math.min(2048, Math.round(VH*PERF.scale*(final ? 1 : 0.5))); if (rtg.width !== w || rtg.height !== h) rtg.setSize(w, h); } }
   const showGuides = !(renderTab && R.hideGuides); venue.traverse(o => { if (o.userData.guide) o.visible = showGuides; });
   stageGroup.traverse(o => { if (o.userData.guide) o.visible = showGuides; });
   const showCams = !(renderTab && R.hideCams);
@@ -1874,18 +1926,28 @@ async function doRender(){
     renderer.setPixelRatio(1); composer.setPixelRatio(1); renderer.setSize(W*ss, H*ss, false); composer.setSize(W*ss, H*ss);
     bloom.resolution.set(W*ss/2, H*ss/2); pMat.uniforms.uScale.value = H*ss*0.9;
     cam.aspect = W/H; cam.updateProjectionMatrix();
-    beamSteps = 56;
-    for (let i=0;i<3;i++){ setupEffects(cam, true); renderPass.camera = cam; bloom.strength = S.glow * (S.mode==='show' ? 1 : 0.25); hideOwnCam(true); composer.render(); hideOwnCam(false); }
+    beamSteps = 64;
+    pool.forEach(l => l.visible = true); updateLights(lastT, 0);
+    const passes = R.quality==='draft' ? 1 : R.quality==='ultra' ? 16 : 8;
     const out = document.createElement('canvas'); out.width = W; out.height = H; const g = out.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(canvas, 0, 0, W*ss, H*ss, 0, 0, W, H);
+    const frame = () => { setupEffects(cam, true); renderPass.camera = cam; bloom.strength = S.glow * (S.mode==='show' ? 1 : 0.25); hideOwnCam(true); composer.render(); hideOwnCam(false); };
+    frame(); frame();   // warm up: shadow maps, reflections, shaders
+    for (let i=0;i<passes;i++){
+      const jx = passes > 1 ? hash(i*7.13 + 1.3) - 0.5 : 0, jy = passes > 1 ? hash(i*3.71 + 9.1) - 0.5 : 0;
+      cam.setViewOffset(W*ss, H*ss, jx, jy, W*ss, H*ss); beamJit = passes > 1 ? i/passes : 0;
+      frame();
+      g.globalAlpha = 1/(i+1); g.drawImage(canvas, 0, 0, W*ss, H*ss, 0, 0, W, H);
+      if (st && i % 2 === 1){ st.textContent = `Rendering ${W} × ${H}: pass ${i+1} of ${passes}…`; await new Promise(r => setTimeout(r, 0)); }
+    }
+    cam.clearViewOffset(); beamJit = 0; g.globalAlpha = 1;
     lastBlob = await new Promise(r => out.toBlob(r, 'image/png'));
   } catch(e){ ok = false; console.error(e); toast(`The render failed (${e.message || e}). Try a smaller size or Draft quality.`, 'err'); }
-  finally { rendering = false; beamSteps = PERF.steps; cam.aspect = prevAspect; cam.updateProjectionMatrix(); renderer.setPixelRatio(PERF.scale); composer.setPixelRatio(PERF.scale); resize(); $('#bRender') && ($('#bRender').disabled = false); }
+  finally { rendering = false; beamSteps = PERF.steps; beamJit = 0; if (cam.view) cam.clearViewOffset(); pool.forEach((l, i) => l.visible = i < PERF.lights); cam.aspect = prevAspect; cam.updateProjectionMatrix(); renderer.setPixelRatio(PERF.scale); composer.setPixelRatio(PERF.scale); resize(); $('#bRender') && ($('#bRender').disabled = false); }
   if (!ok || !lastBlob) return;
   const secs = ((performance.now()-t0)/1000).toFixed(1);
   lastName = `${slug()}-${S.onAir ? getDev(S.onAir).name.replace(/\W+/g,'-').toLowerCase() : 'view'}-${W}x${H}.png`;
   $('#roImg').src = URL.createObjectURL(lastBlob);
-  $('#roInfo').textContent = `${W} × ${H} PNG · ${ss > 1 ? ss + '× supersampled' : 'no supersampling'} · ${(lastBlob.size/1048576).toFixed(1)} MB · ${secs} s`;
+  $('#roInfo').textContent = `${W} × ${H} PNG · ${ss > 1 ? ss + '× supersampled' : 'no supersampling'} · ${R.quality==='draft' ? 1 : R.quality==='ultra' ? 16 : 8} passes · ${(lastBlob.size/1048576).toFixed(1)} MB · ${secs} s`;
   $('#renderOut').hidden = false; if (st) st.textContent = 'Done. Save the PNG from the preview.';
 }
 let rendering = false;
@@ -2149,7 +2211,7 @@ function serialize(withFiles){
     gobos:S.gobos||[],
     settings:{ eventName:S.eventName, teamA:S.teamA, teamB:S.teamB, mode:S.mode, dimmer:S.dimmer, haze:S.haze, glow:S.glow, behind:S.behind, placeholder:S.placeholder, autoRigSize:S.autoRigSize, autoRigReplace:S.autoRigReplace, autoRigOnImport:S.autoRigOnImport },
     nextId:S.nextId,
-    devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, auto:d.auto, p:d.p })),
+    devices:S.devices.map(d => ({ id:d.id, type:d.type, name:d.name, pos:d.pos, mount:d.mount, parent:d.parent||null, local:d.local||null, p:d.p })),
     cues:S.cues,
     models: withFiles ? await Promise.all(S.models.map(async m => ({ id:m.id, name:m.name, units:m.units, selfLit:m.selfLit, visible:m.visible, pos:m.pos, rotX:m.rotX||0, rotY:m.rotY||0, rotZ:m.rotZ||0, scale:m.scale||[1,1,1], matp:m.matp||{},
       files: await Promise.all((m.files||[]).map(async f => ({ name:f.name, data:b64(await f.arrayBuffer()) }))),
@@ -2166,7 +2228,8 @@ async function loadProject(j, withModels){
   clearRig(); S.models.slice().forEach(m => m.rt && modelGroup.remove(m.rt.g)); S.models = [];
   for (let i=placeTargets.length-1;i>=0;i--) if (placeTargets[i].userData.modelId) placeTargets.splice(i,1);
   Object.assign(S, j.settings || {}); S.nextId = j.nextId || 1; S.gobos = j.gobos || []; goboCache.clear();
-  for (const d of j.devices || []){ const T = TYPE[d.type]; if (!T) continue; const nd = { ...d, p:{ ...T.d, ...d.p } }; S.devices.push(nd); buildDevice(nd); }
+  for (const d of j.devices || []){ const T = TYPE[d.type]; if (!T) continue; const nd = { ...d, p:{ ...T.d, ...d.p } }; delete nd.auto; S.devices.push(nd); buildDevice(nd); }
+  inferTrussParents();
   S.cues = j.cues || [];
   syncTopUI(); setMode(S.mode); buildStands(); applyVenue(); refreshCamBar(); renderCues(); select(null);
   if (withModels) for (const m of j.models || []){ if (!m.files || !m.files.length) continue;
@@ -2333,7 +2396,7 @@ function exampleRig(){
   const hang = (type, x, y, z, p={}) => addDevice(type, V3(x, y-0.45, z), { mount:'hung', p });
   for (let i=0;i<10;i++){ const x = -15 + i*(30/9); hang('moving', x, 11, SF-1, { tilt:30, pan:0, color:'#3f9dff', gobo: i%3===1 ? 'nusta' : i%3===2 ? 'breakup' : 'open', goboSpin: i%3===2 ? .3 : 0 }); }
   for (let i=0;i<6;i++){ const d = hang('wash', -12.5 + i*5, 12.5, -HD+8, { color:'#7a3cff' }); aimLight(d, V3(d.pos[0], DECK_H, -HD+10)); }
-  hang('strobe', -16, 12.5, -HD+8); hang('strobe', 16, 12.5, -HD+8);
+  hang('strobe', -14.4, 12.5, -HD+8); hang('strobe', 14.4, 12.5, -HD+8);
   for (const x of [-15,-5,5,15]){ const d = hang('moving', x, 13, -6, { color:'#ff5a3c' }); aimLight(d, V3(x*0.6, DECK_H, -HD+10)); }
   hang('laser', -6, 12.5, -HD+8, { pan:180, tilt:82, pattern:'fan', color:'#2bff7a' }); hang('laser', 6, 12.5, -HD+8, { pan:180, tilt:82, pattern:'fan', color:'#2bff7a', phase:.5 });
   for (const [x,z] of [[-HW-17,-12],[HW+17,-12],[-24,HD+18],[24,HD+18]]){ const d = addDevice('stadium', V3(x, 13, z)); aimLight(d, STAGE_C); }
@@ -2344,6 +2407,7 @@ function exampleRig(){
   const c2 = addDevice('cam_jib', V3(-13, 0, -21), { name:'CAM 2 · Jib', p:{ arm:8, swing:35, elev:22, focal:20 } }); aimCam(c2, V3(0, 3, -HD+10));
   const c3 = addDevice('cam_ptz', V3(-17, DECK_H, -HD+4), { name:'CAM 3 · Player PTZ', p:{ height:2.2, focal:30 } }); aimCam(c3, V3(-7.5, DECK_H+1.2, -HD+9.4));
   const c4 = addDevice('cam_steadi', V3(7, 0, -20), { name:'CAM 4 · Steadicam', p:{ focal:24 } }); aimCam(c4, V3(0, DECK_H+2, -HD+10));
+  inferTrussParents();
   buildDemoCues();
 }
 function buildDemoCues(info = { deckY:DECK_H, focusZ:-HD+9.5, frontZ:SF }){
@@ -2423,7 +2487,7 @@ function resize(){
   pMat.uniforms.uScale.value = VH * 0.9;
 }
 new ResizeObserver(resize).observe(view2);
-let last = performance.now(), fpsAcc = 0, fpsN = 0, fpsShow = 60, ledT = 0;
+let lastT = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, fpsShow = 60, ledT = 0;
 function renderFrame(){
   if (rendering) return;
   const cam = activeCam();
@@ -2450,7 +2514,7 @@ function renderFrame(){
 }
 function loop(){
   requestAnimationFrame(loop);
-  const now = performance.now(), dt = Math.min(0.05, (now-last)/1000); last = now; const t = now/1000;
+  const now = performance.now(), dt = Math.min(0.05, (now-last)/1000); last = now; const t = now/1000; lastT = t;
   if (fly){ const k = clamp((now - fly.s)/fly.dur, 0, 1), e = 1 - Math.pow(1-k, 3); camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.t0, fly.t1, e); if (k>=1) fly = null; }
   stepFly(dt);
   if (planMode) oControls.update(); else controls.update();
@@ -2479,6 +2543,6 @@ if (!restored){ exampleRig(); syncTopUI(); }
 refreshCamBar(); renderCues(); renderInspector();
 if (restored) toast('Restored your last session from this browser.', 'ok');
 document.fonts && document.fonts.ready.then(() => { floorLabel.userData.redraw && floorLabel.userData.redraw(); });
-window.__planner = { S, camera, controls };
+window.__planner = { S, camera, controls, R, bloom, gtao };
 loop();
 </script>

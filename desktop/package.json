@@ -1,7 +1,7 @@
 {
   "name": "nusta-arena-planner",
   "productName": "nusta Arena Planner",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "nusta Arena Planner: 3D esports event design, lighting, cameras and renders.",
   "author": "nusta",
   "main": "main.js",
